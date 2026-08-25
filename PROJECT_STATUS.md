@@ -30,9 +30,11 @@ Provider——Poweramp 能发现它、添加它，并通过它播放一首固定
 | 测试音频与封面资源 | ✅ 完成 | `res/raw/test_audio.mp3`（官方示例 bensound-dubstep.mp3 副本）+ `test_cover.jpg` |
 | MainActivity / SettingsActivity | ✅ 完成 | 按"保持简单"要求实现自检与快捷入口 |
 | 日志与错误处理 | ✅ 完成 | 统一 Tag `NeteasePowerampProvider`；错误路径全部返回 `FileNotFoundException` 类异常 |
-| 编译（`assembleDebug`） | ✅ 成功 | APK 已生成（见 §4），lint 0 错误 |
+| 编译（`assembleDebug`） | ✅ 成功 | APK 已生成（见 §4），lint 0 错误；2026-08-25 已二次复验（up-to-date 通过） |
 | Lint 检查 | ✅ 已运行 | 0 errors / 16 warnings（均为版本类提示，见 §4.2） |
 | 单元测试 | ⚠️ 未配置 | 项目未创建 test 源集；第一阶段无可测纯逻辑，暂不阻塞 |
+| git 基线 | ✅ 完成 | 仓库已初始化，基线提交 `5b440d2`（不含 build 产物 / local.properties） |
+| 真机验证辅助脚本 | ✅ 完成 | `tools/phase1_device_check.ps1`：自动安装 + SAF 查询 + openDocument 读流 + logcat 核对 |
 | 真机安装与 Poweramp 联调 | ❌ 待执行 | 任务文档第二十五/二十六节测试 1–7 尚无执行记录（本机当前无 ADB 设备） |
 | 第一阶段完成标准（第二十七节） | 🟡 部分满足 | 编译相关条目已满足，设备相关条目待验证后勾选 |
 
@@ -123,7 +125,15 @@ NeteasePowerampProvider/
 
 ## 5. 待完成事项（第一阶段收尾）
 
-以下均来自任务文档第二十五～二十七节，需要连接 Android 设备（安装 Poweramp 后）逐项执行：
+以下均来自任务文档第二十五～二十七节，需要连接 Android 设备（安装 Poweramp 后）逐项执行。
+
+**自动化前置检查**：连接设备后先运行
+`powershell -ExecutionPolicy Bypass -File tools\phase1_device_check.ps1`，
+脚本会依次完成：设备检测 → `adb install -r` → 启动 MainActivity → SAF 查询
+（roots / root 子节点 / test_folder 子节点）→ openDocument 读流校验（>100KB）→
+logcat 事件核对（initialized / queryRoots / queryDocument / queryChildDocuments /
+openDocument / test audio opened），全部通过后再打印下方人工测试清单。
+任一自动步骤失败即中止，先修复再继续。
 
 1. `adb install -r app-debug.apk` 安装并确认 App 启动无 Crash、Provider 已注册；
 2. Poweramp → Settings → Library → Music Folders 中添加本 Provider，确认能看到
@@ -133,7 +143,8 @@ NeteasePowerampProvider/
    连续播放两次；快速点击播放/暂停；拖动进度条（0:10 → 0:30 seek 验证）；
 5. 以上全部通过后，对照第二十七节完成标准清单勾选收尾，第一阶段方可宣告关闭。
 
-> 备注：项目目录目前未纳入 git 版本管理，建议在第一阶段收尾时初始化仓库并提交基线。
+> 备注：git 仓库已于 2026-08-25 初始化并提交第一阶段基线（`5b440d2`）；
+> `.gitignore` 已补充 `.kotlin/` 缓存目录。后续提交请保持不含 build 产物与 `local.properties`。
 
 ## 6. 未实现功能（按任务边界明确不做）
 
