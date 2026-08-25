@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+	android:layout_width="match_parent"
+	android:layout_height="match_parent"
+	android:fillViewport="true">
+
+	<LinearLayout
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:orientation="vertical"
+		android:padding="16dp">
+
+		<TextView
+			android:id="@+id/status"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:text="@string/main_status_idle"
+			android:textSize="14sp" />
+
+		<Button
+			android:id="@+id/btn_check"
+			android:onClick="checkProviderConfig"
+			android:text="@string/btn_check_provider"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content" />
+
+		<Button
+			android:id="@+id/btn_pa_folders"
+			android:onClick="openPowerampMusicFolders"
+			android:text="@string/btn_open_pa_music_folders"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content" />
+
+		<Button
+			android:id="@+id/btn_settings"
+			android:onClick="openSettings"
+			android:text="@string/btn_open_settings"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="24dp"
+			android:text="@string/phase1_header"
+			android:textStyle="bold" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:text="@string/feature_provider_registered" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:text="@string/feature_poweramp_provider" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:text="@string/feature_test_track" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:text="@string/feature_test_playback" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="12dp"
+			android:text="@string/feature_todo_search" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:text="@string/feature_todo_login" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:text="@string/feature_todo_playlists" />
+
+		<TextView
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:text="@string/feature_todo_lyrics" />
+	</LinearLayout>
+</ScrollView>

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+	<string name="app_name">网易云音乐</string>
+	<string name="main_activity_label">网易云 Poweramp Provider</string>
+	<string name="settings_title">设置</string>
+
+	<string name="phase1_header">第一阶段开发状态:Poweramp Provider 第一阶段</string>
+	<string name="feature_provider_registered">✓ Provider 注册</string>
+	<string name="feature_poweramp_provider">✓ Poweramp Provider</string>
+	<string name="feature_test_track">✓ 测试歌曲</string>
+	<string name="feature_test_playback">✓ 测试播放</string>
+	<string name="feature_todo_search">¨ 网易云搜索</string>
+	<string name="feature_todo_login">¨ 网易云登录</string>
+	<string name="feature_todo_playlists">¨ 网易云歌单</string>
+	<string name="feature_todo_lyrics">¨ 网易云歌词</string>
+
+	<string name="btn_check_provider">检查 Provider 配置</string>
+	<string name="btn_open_pa_music_folders">打开 Poweramp 音乐文件夹设置</string>
+	<string name="btn_open_settings">打开设置页</string>
+	<string name="main_status_idle">点击"检查 Provider 配置"验证 Provider 状态。</string>
+
+	<string name="check_authority_line">Provider Authority:%1$s</string>
+	<string name="check_root_found">Root:%1$s</string>
+	<string name="check_provider_registered">Provider 状态:Registered</string>
+	<string name="check_provider_failed">Provider 状态:未响应(请检查安装)</string>
+	<string name="check_poweramp_detected">Poweramp detected(%1$s)</string>
+	<string name="check_poweramp_missing">未检测到 Poweramp</string>
+
+	<string name="settings_authority_label">Provider Authority:</string>
+	<string name="settings_authority_value">com.yczz.neteasepoweramp.provider</string>
+	<string name="settings_status_label">Provider 状态:Registered</string>
+	<string name="settings_track_label">测试歌曲:Poweramp Provider Test</string>
+	<string name="settings_album_label">专辑:Provider Test / 歌手:NeteasePowerampProvider</string>
+	<string name="settings_poweramp_label">Poweramp:</string>
+	<string name="poweramp_detected">Poweramp detected(%1$s)</string>
+	<string name="poweramp_not_detected">未检测到 Poweramp</string>
+</resources>

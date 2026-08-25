@@ -1,0 +1,19 @@
+# Versions aligned with the official powerampapi repo (github.com/maxmpz/powerampapi)
+[versions]
+agp = "8.13.0"
+kotlin = "2.1.20"
+annotation = "1.9.1"
+appcompat = "1.7.1"
+core = "1.17.0"
+
+[libraries]
+androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "annotation" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+androidx-core = { group = "androidx.core", name = "core", version.ref = "core" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core" }
+jdt-annotation = { module = "org.eclipse.jdt:org.eclipse.jdt.annotation", version = "2.3.100" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
