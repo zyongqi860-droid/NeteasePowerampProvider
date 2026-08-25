@@ -15,6 +15,8 @@ import android.widget.EditText
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.maxmpz.poweramp.player.PowerampAPI
 import com.maxmpz.poweramp.player.PowerampAPIHelper
 import com.yczz.neteasepoweramp.model.Song
@@ -38,6 +40,18 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // targetSdk 35 enforces edge-to-edge; without inset handling the IME pans the window and
+        // the search row can end up stuck off-screen (observed on a live Android 16 device).
+        // Resizing for IME + padding for system bars keeps every control visible and tappable.
+        val root = findViewById<View>(R.id.main_root)
+        val contentPad = (RESERVED_PAD_DP * resources.displayMetrics.density).toInt()
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime(),
+            )
+            view.setPadding(bars.left + contentPad, bars.top + contentPad, bars.right + contentPad, bars.bottom + contentPad)
+            WindowInsetsCompat.CONSUMED
+        }
         searchService = SearchService(this)
         resultAdapter = SongAdapter()
         val resultsList = findViewById<ListView>(R.id.search_results)
@@ -181,5 +195,10 @@ class MainActivity : Activity() {
 
     fun openSettings(view: View?) {
         startActivity(Intent(this, SettingsActivity::class.java))
+    }
+
+    private companion object {
+        /** Replaces the layout's static 16dp padding once insets are applied. */
+        const val RESERVED_PAD_DP = 16
     }
 }

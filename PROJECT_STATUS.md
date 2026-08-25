@@ -172,6 +172,7 @@ openDocument / test audio opened），全部通过后再打印下方人工测试
 | MainActivity 搜索 UI | ✅ | 关键词输入 + 搜索按钮 + 双行结果列表；点击行保存入库并 Toast；网络/DB 全在后台线程 |
 | Manifest | ✅ | 新增 INTERNET 权限（第二阶段首次放开），仍无其他权限 |
 | 编译 / lint | ✅ | `assembleDebug` BUILD SUCCESSFUL；lint 0 errors / 32 warnings（均为依赖版本类提示） |
+| 真机验证（vivo V2425A，Android 16） | ✅ 自动化部分 | 6 项 Provider 契约 instrument 测试全绿；搜索→保存→入库端到端打通（见 §7.1）；Poweramp 侧人工项待执行 |
 
 数据流：
 
@@ -187,6 +188,30 @@ MainActivity 输入"周杰伦"
 ```
 
 第二阶段真机测试清单（任务书十一节）：搜索周杰伦出结果；Poweramp 刷新见「网易云音乐」；进入「搜索结果」看到歌曲；点击歌曲播测试音频或提示；重启手机后数据库仍在。另：第一阶段 §5 清单仍未执行（无设备）。
+
+### 7.1 真机验证记录（2026-08-25，vivo V2425A / Android 16）
+
+自动化部分全部通过：
+
+1. **安装/启动**：`adb install -r` 成功，MainActivity 启动无 Crash；
+2. **Provider 契约测试**（`ProviderDeviceTest`，6 项 instrument 测试全绿，以应用 uid 在设备上运行）：
+   queryRoots（root_id/FLAG_SUPPORTS_IS_CHILD）、root 子节点（搜索结果+Test Music）、
+   Test Music 固定曲目、保存歌曲元数据（TITLE/ARTIST/DURATION/文档 ID）、
+   未知文档返回 null 游标不崩溃、openDocument 对测试曲目与 netease 歌曲均返回 >100KB 可读 fd；
+3. **端到端搜索链路**：UI 输入 "jay" → 搜索返回周杰伦相关歌曲（想你就写信/屋顶/布拉格广场/默/刀马旦）；
+4. **保存入库**：点击结果行「想你就写信 (Live)」→ Room WAL 出现该记录（`run-as` 直接核验）；
+5. **DB→Provider 路径**：单跑 `savedSongIsListedWithMetadata` OK，且 fixture 清理不影响用户数据。
+
+过程中发现并修复两个真机问题：
+
+- **`parseSongId` 解析 bug**：`substringAfterLast('/')` 截出含 `song_` 前缀的字符串导致歌曲文档 ID 永远解析失败（测试捕获）；
+- **targetSdk 35 edge-to-edge + IME pan 缺陷**：键盘弹出时窗口被平移且关闭后不复位，搜索区被顶出屏幕（Android 16 实测）。
+  修复：Manifest `adjustResize` + `ViewCompat.setOnApplyWindowInsetsListener`（systemBars+ime 内边距）。
+
+另：shell（uid 2000）直接 `content query` DocumentsProvider 被 `MANAGE_DOCUMENTS` 权限拒绝属 Android 设计使然，
+自动化验证统一走 instrument 测试（`tools/phase1_device_check.ps1` 已更新此策略）。
+
+**待人工执行**（Poweramp 侧）：音乐文件夹添加 Provider、播放/seek/重启/强停测试、对照第二十七节勾选。
 
 ## 8. 第三阶段建议
 

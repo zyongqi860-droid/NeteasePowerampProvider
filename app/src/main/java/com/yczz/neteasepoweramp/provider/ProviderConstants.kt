@@ -36,7 +36,7 @@ object ProviderConstants {
     /** @return NetEase song id embedded in [documentId], or null if it is not a song id. */
     fun parseSongId(documentId: String): Long? {
         if (!documentId.startsWith("$SEARCH_FOLDER_PATH/$SONG_DOC_PREFIX")) return null
-        return documentId.substringAfterLast('/').toLongOrNull()
+        return documentId.substringAfter(SONG_DOC_PREFIX, "").toLongOrNull()
     }
 
     const val ROOT_ID = "netease_root"

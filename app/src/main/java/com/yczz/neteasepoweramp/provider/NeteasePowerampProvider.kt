@@ -357,6 +357,15 @@ class NeteasePowerampProvider : DocumentsProvider() {
             Document.COLUMN_SIZE,
         )
 
-        val DEFAULT_TRACK_PROJECTION = DEFAULT_DOCUMENT_PROJECTION
+        // Track default projection also carries the metadata columns so clients that query with
+        // defaults (and Poweramp's Info/Tags UI) can read TITLE/ARTIST/ALBUM/DURATION directly.
+        val DEFAULT_TRACK_PROJECTION = arrayOf(
+            *DEFAULT_DOCUMENT_PROJECTION,
+            MediaStore.MediaColumns.TITLE,
+            MediaStore.Audio.AudioColumns.ARTIST,
+            MediaStore.Audio.AudioColumns.ALBUM,
+            MediaStore.Audio.AudioColumns.DURATION,
+            TrackProviderConsts.COLUMN_GENRE,
+        )
     }
 }

@@ -14,6 +14,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0-phase1"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -43,4 +44,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.room.runtime)
     ksp(libs.room.compiler)
+    // On-device provider contract tests (run as the app uid, so they can access the exported
+    // DocumentsProvider directly - adb shell cannot, it lacks MANAGE_DOCUMENTS by design).
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }

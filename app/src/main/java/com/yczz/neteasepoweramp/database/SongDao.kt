@@ -26,6 +26,10 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE song_id = :songId")
     fun getSong(songId: Long): SongEntity?
 
+    /** Used by device tests to remove their fixture rows without touching user-saved songs. */
+    @Query("DELETE FROM songs WHERE song_id = :songId")
+    fun deleteSong(songId: Long)
+
     @Query("DELETE FROM songs")
     fun clearSongs()
 }
