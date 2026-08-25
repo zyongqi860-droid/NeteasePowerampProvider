@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -38,4 +39,8 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core)
     implementation(libs.androidx.core.ktx)
+    // Phase 2: NetEase search over HTTP (OkHttp only - JSON parsed with built-in org.json) and Room cache.
+    implementation(libs.okhttp)
+    implementation(libs.room.runtime)
+    ksp(libs.room.compiler)
 }

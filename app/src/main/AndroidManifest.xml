@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Phase 1 is fully offline: no INTERNET permission and no other permissions are requested. -->
+    <!-- Phase 1 was fully offline. Phase 2 adds NetEase search, so INTERNET is required.
+         Still no other permissions are requested. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

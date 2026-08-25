@@ -15,30 +15,36 @@ import android.provider.MediaStore
 import android.util.Log
 import com.maxmpz.poweramp.player.TrackProviderConsts
 import com.yczz.neteasepoweramp.R
+import com.yczz.neteasepoweramp.database.AppDatabase
+import com.yczz.neteasepoweramp.database.SongDao
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.Arrays
 
 /**
- * Minimal Poweramp Track Provider (phase 1).
+ * Minimal Poweramp Track Provider (phases 1-2).
  *
  * Hierarchy:
  * ```
  * root (Netease Poweramp / 网易云音乐)
+ * ├── root/netease_search ("搜索结果", cached songs saved from MainActivity)
+ * │     └── root/netease_search/song_<songId>
  * └── root/test_folder (Test Music)
- *     └── root/test_folder/track_test_001 (Poweramp Provider Test)
+ *       └── root/test_folder/track_test_001 (Poweramp Provider Test)
  * ```
  *
- * The track is served as a direct seekable file descriptor pointing at the extracted
+ * The test track is served as a direct seekable file descriptor pointing at the extracted
  * res/raw/test_audio.mp3 copy, which is the officially recommended approach for file-backed
  * tracks (see poweramp_provider_example readme: wave-seekbar, seeking and local tag reading work
- * out of the box for seekable fds).
+ * out of the box for seekable fds). NetEase songs reuse the same fd as an audio placeholder:
+ * phase 2 is display-only, real playback URLs arrive in phase 3.
  *
  * THREADING: DocumentsProvider methods may be called concurrently from multiple binder threads
  * (Poweramp also opens up to 2 tracks in parallel for crossfade). All shared state below is
  * immutable after [onCreate]; the only lazily initialized piece, the extracted test audio file,
- * is guarded by a lock inside [TestAudioManager].
+ * is guarded by a lock inside [TestAudioManager]. Room handles its own synchronization; song
+ * queries are small blocking reads that are safe on binder threads.
  */
 class NeteasePowerampProvider : DocumentsProvider() {
 
@@ -47,6 +53,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
     private var apkInstallTime = 0L
 
     private lateinit var testAudioManager: TestAudioManager
+    private lateinit var songDao: SongDao
 
     override fun onCreate(): Boolean {
         val context = checkNotNull(context)
@@ -58,6 +65,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
             System.currentTimeMillis()
         }
         testAudioManager = TestAudioManager(context.applicationContext)
+        songDao = AppDatabase.get(context.applicationContext).songDao()
         // Extract up front so the first playback does not pay for the copy; later calls are cheap existence checks.
         try {
             testAudioManager.ensureTestAudioFile()
@@ -98,26 +106,57 @@ class NeteasePowerampProvider : DocumentsProvider() {
             when (documentId) {
                 ProviderConstants.ROOT_DOC_ID -> MatrixCursor(resolveDocumentProjection(projection)).apply {
                     newRow().apply {
-                        fillFolderRow(documentId, this, TrackProviderConsts.FLAG_HAS_SUBDIRS)
-                        // Same label as Root.COLUMN_TITLE - official example recommends consistent labels for roots.
-                        add(Document.COLUMN_DISPLAY_NAME, ProviderConstants.ROOT_TITLE)
+                        // Root has child folders, so hint HAS_SUBDIRS for Poweramp's tree expansion.
+                        ProviderCursorBuilder.fillFolderRow(
+                            this,
+                            documentId,
+                            ProviderConstants.ROOT_TITLE,
+                            apkInstallTime,
+                            TrackProviderConsts.FLAG_HAS_SUBDIRS,
+                        )
                     }
                 }
+
+                ProviderConstants.SEARCH_FOLDER_PATH ->
+                    MatrixCursor(resolveDocumentProjection(projection)).apply {
+                        newRow().apply {
+                            ProviderCursorBuilder.fillFolderRow(
+                                this,
+                                documentId,
+                                SEARCH_FOLDER_DISPLAY_NAME,
+                                apkInstallTime,
+                                TrackProviderConsts.FLAG_NO_SUBDIRS,
+                            )
+                        }
+                    }
 
                 ProviderConstants.TEST_FOLDER_DOC_ID ->
                     MatrixCursor(resolveDocumentProjection(projection)).apply {
                         newRow().apply {
-                            fillFolderRow(documentId, this, TrackProviderConsts.FLAG_NO_SUBDIRS)
-                            add(Document.COLUMN_DISPLAY_NAME, ProviderConstants.TEST_FOLDER_DISPLAY_NAME)
+                            ProviderCursorBuilder.fillFolderRow(
+                                this,
+                                documentId,
+                                ProviderConstants.TEST_FOLDER_DISPLAY_NAME,
+                                apkInstallTime,
+                                TrackProviderConsts.FLAG_NO_SUBDIRS,
+                            )
                         }
                     }
 
                 ProviderConstants.TRACK_DOC_ID ->
                     MatrixCursor(resolveTrackProjection(projection)).apply {
-                        fillTestTrackRow(newRow())
+                        ProviderCursorBuilder.fillTestTrackRow(newRow(), testAudioManager.fileSizeOrFallback(), apkInstallTime)
                     }
 
-                else -> throw FileNotFoundException("unknown document $documentId")
+                else -> {
+                    val songId = ProviderConstants.parseSongId(documentId)
+                    if (songId == null) throw FileNotFoundException("unknown document $documentId")
+                    val song = songDao.getSong(songId)
+                        ?: throw FileNotFoundException("song $songId is not saved in the provider database")
+                    MatrixCursor(resolveTrackProjection(projection)).apply {
+                        ProviderCursorBuilder.fillSongRow(newRow(), song, servedSongSize())
+                    }
+                }
             }
         } catch (fnfe: FileNotFoundException) {
             throw fnfe
@@ -142,14 +181,39 @@ class NeteasePowerampProvider : DocumentsProvider() {
                 ProviderConstants.ROOT_DOC_ID ->
                     MatrixCursor(resolveDocumentProjection(projection)).apply {
                         newRow().apply {
-                            fillFolderRow(ProviderConstants.TEST_FOLDER_DOC_ID, this, TrackProviderConsts.FLAG_NO_SUBDIRS)
-                            add(Document.COLUMN_DISPLAY_NAME, ProviderConstants.TEST_FOLDER_DISPLAY_NAME)
+                            ProviderCursorBuilder.fillFolderRow(
+                                this,
+                                ProviderConstants.SEARCH_FOLDER_PATH,
+                                SEARCH_FOLDER_DISPLAY_NAME,
+                                apkInstallTime,
+                                TrackProviderConsts.FLAG_NO_SUBDIRS,
+                            )
+                        }
+                        newRow().apply {
+                            ProviderCursorBuilder.fillFolderRow(
+                                this,
+                                ProviderConstants.TEST_FOLDER_DOC_ID,
+                                ProviderConstants.TEST_FOLDER_DISPLAY_NAME,
+                                apkInstallTime,
+                                TrackProviderConsts.FLAG_NO_SUBDIRS,
+                            )
                         }
                     }
 
+                ProviderConstants.SEARCH_FOLDER_PATH -> {
+                    // Blocking Room read on the binder thread: tiny table, no network involved.
+                    val songs = songDao.getSongs()
+                    Log.i(TAG, "provider query songs count=${songs.size}")
+                    MatrixCursor(resolveTrackProjection(projection)).apply {
+                        for (song in songs) {
+                            ProviderCursorBuilder.fillSongRow(newRow(), song, servedSongSize())
+                        }
+                    }
+                }
+
                 ProviderConstants.TEST_FOLDER_DOC_ID ->
                     MatrixCursor(resolveTrackProjection(projection)).apply {
-                        fillTestTrackRow(newRow())
+                        ProviderCursorBuilder.fillTestTrackRow(newRow(), testAudioManager.fileSizeOrFallback(), apkInstallTime)
                     }
 
                 else -> throw FileNotFoundException("unknown parent document $parentDocumentId")
@@ -195,8 +259,17 @@ class NeteasePowerampProvider : DocumentsProvider() {
 
         val file: File =
             try {
-                if (documentId != ProviderConstants.TRACK_DOC_ID) throw FileNotFoundException("unknown document $documentId")
-                Log.i(TAG, "track requested documentId=$documentId")
+                val isNeteaseSong = ProviderConstants.parseSongId(documentId) != null
+                if (!isNeteaseSong && documentId != ProviderConstants.TRACK_DOC_ID) {
+                    throw FileNotFoundException("unknown document $documentId")
+                }
+                if (isNeteaseSong) {
+                    // Phase 2 is display-only: NetEase songs temporarily stream the bundled test
+                    // audio so Poweramp playback stays functional until phase-3 URL support lands.
+                    Log.i(TAG, "netease song requested, serving test audio placeholder documentId=$documentId")
+                } else {
+                    Log.i(TAG, "track requested documentId=$documentId")
+                }
                 testAudioManager.ensureTestAudioFile()
             } catch (fnfe: FileNotFoundException) {
                 throw fnfe
@@ -221,7 +294,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
         val res =
             parentDocumentId != null && documentId != null && (
                 (documentId == ProviderConstants.TEST_FOLDER_DOC_ID && parentDocumentId == ProviderConstants.ROOT_DOC_ID) ||
-                    (documentId == ProviderConstants.TRACK_DOC_ID && parentDocumentId == ProviderConstants.TEST_FOLDER_DOC_ID) ||
+                    (documentId == ProviderConstants.SEARCH_FOLDER_PATH && parentDocumentId == ProviderConstants.ROOT_DOC_ID) ||
                     documentId.startsWith("$parentDocumentId/")
                 )
         Log.w(TAG, "isChildDocument parentDocumentId=$parentDocumentId documentId=$documentId => $res")
@@ -237,34 +310,11 @@ class NeteasePowerampProvider : DocumentsProvider() {
 
     // ---------------------------------------------------------------------- helpers
 
-    private fun fillTestTrackRow(row: MatrixCursor.RowBuilder) {
-        row.add(Document.COLUMN_DOCUMENT_ID, ProviderConstants.TRACK_DOC_ID)
-        row.add(Document.COLUMN_MIME_TYPE, TestTrack.MIME_TYPE)
-        row.add(Document.COLUMN_DISPLAY_NAME, TestTrack.DISPLAY_NAME)
-        row.add(Document.COLUMN_LAST_MODIFIED, apkInstallTime)
-        row.add(Document.COLUMN_SIZE, testAudioManager.fileSizeOrFallback())
-        // TITLE/DURATION present => Poweramp uses cursor metadata and skips tag-scanning the file;
-        // FLAG_SUPPORTS_THUMBNAIL then makes Poweramp fetch album art via openDocumentThumbnail.
-        row.add(Document.COLUMN_FLAGS, Document.FLAG_SUPPORTS_THUMBNAIL)
-
-        row.add(MediaStore.MediaColumns.TITLE, TestTrack.TITLE)
-        row.add(MediaStore.Audio.AudioColumns.ARTIST, TestTrack.ARTIST)
-        row.add(MediaStore.Audio.AudioColumns.ALBUM, TestTrack.ALBUM)
-        row.add(MediaStore.Audio.AudioColumns.TRACK, TestTrack.TRACK_NUMBER)
-        row.add(MediaStore.Audio.AudioColumns.DURATION, TestTrack.DURATION_MS)
-        row.add(TrackProviderConsts.COLUMN_GENRE, TestTrack.GENRE)
-    }
-
-    private fun fillFolderRow(documentId: String, row: MatrixCursor.RowBuilder, subdirHint: Int) {
-        row.add(Document.COLUMN_DOCUMENT_ID, documentId)
-        row.add(Document.COLUMN_MIME_TYPE, Document.MIME_TYPE_DIR)
-        row.add(Document.COLUMN_LAST_MODIFIED, apkInstallTime)
-        // TrackProviderConsts.COLUMN_FLAGS (not Document.COLUMN_FLAGS) carries the folder hint that lets
-        // Poweramp avoid loading children until the user expands the tree.
-        if (subdirHint != 0) {
-            row.add(TrackProviderConsts.COLUMN_FLAGS, subdirHint)
-        }
-    }
+    /**
+     * SIZE reported for NetEase songs. Phase 2 serves the test audio file for playback, so the
+     * honest answer is that file's size; phase 3 will replace this with real per-song sizes.
+     */
+    private fun servedSongSize(): Long = testAudioManager.fileSizeOrFallback()
 
     private fun resolveProjection(projection: Array<out String>?, defaults: Array<String>): Array<String> =
         if (projection != null && projection.isNotEmpty()) {
@@ -285,6 +335,9 @@ class NeteasePowerampProvider : DocumentsProvider() {
 
     private companion object {
         const val TAG = ProviderConstants.TAG
+
+        /** Label of the "搜索结果" folder shown in Poweramp and the system picker. */
+        const val SEARCH_FOLDER_DISPLAY_NAME = "搜索结果"
 
         val DEFAULT_ROOT_PROJECTION = arrayOf(
             Root.COLUMN_ROOT_ID,

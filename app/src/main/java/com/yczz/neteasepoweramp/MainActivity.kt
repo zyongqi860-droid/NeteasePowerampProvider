@@ -4,24 +4,113 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.DocumentsContract
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
+import android.widget.BaseAdapter
+import android.widget.EditText
+import android.widget.ListView
 import android.widget.TextView
+import android.widget.Toast
 import com.maxmpz.poweramp.player.PowerampAPI
 import com.maxmpz.poweramp.player.PowerampAPIHelper
+import com.yczz.neteasepoweramp.model.Song
 import com.yczz.neteasepoweramp.provider.ProviderConstants
+import com.yczz.neteasepoweramp.service.SearchService
 import com.yczz.neteasepoweramp.settings.SettingsActivity
 
 /**
- * Minimal phase-1 launcher UI: status, provider self-check and shortcuts into Poweramp.
- * No complex UI on purpose (task section 16).
+ * Launcher UI. Phase 1: status, provider self-check, Poweramp shortcuts.
+ * Phase 2 adds the keyword search box; tapping a result row saves it into the provider's
+ * Room cache so Poweramp shows it under 网易云音乐 -> 搜索结果 after a refresh.
+ * All network/database work happens inside [SearchService]; this activity only hops results
+ * back to the main thread.
  */
 class MainActivity : Activity() {
+
+    private lateinit var searchService: SearchService
+    private lateinit var resultAdapter: SongAdapter
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        searchService = SearchService(this)
+        resultAdapter = SongAdapter()
+        val resultsList = findViewById<ListView>(R.id.search_results)
+        resultsList.adapter = resultAdapter
+        resultsList.setOnItemClickListener { _, _, position, _ ->
+            val song = resultAdapter.getItem(position) ?: return@setOnItemClickListener
+            saveSong(song)
+        }
+    }
+
+    override fun onDestroy() {
+        searchService.shutdown()
+        super.onDestroy()
+    }
+
+    /** "搜索" button / IME action: kicks off an async NetEase keyword search. */
+    fun startSearch(view: View?) {
+        val keyword = findViewById<EditText>(R.id.search_keyword).text.toString()
+        findViewById<View>(R.id.btn_search).isEnabled = false
+        searchService.search(
+            keyword,
+            object : SearchService.SearchCallback {
+                override fun onSearchSuccess(songs: List<Song>) {
+                    mainHandler.post {
+                        findViewById<View>(R.id.btn_search).isEnabled = true
+                        if (songs.isEmpty()) {
+                            Toast.makeText(this@MainActivity, R.string.search_empty, Toast.LENGTH_SHORT).show()
+                        }
+                        resultAdapter.replace(songs)
+                    }
+                }
+
+                override fun onSearchError(message: String) {
+                    mainHandler.post {
+                        findViewById<View>(R.id.btn_search).isEnabled = true
+                        Toast.makeText(this@MainActivity, getString(R.string.search_failed, message), Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun saveSong(song: Song) {
+        Log.w(ProviderConstants.TAG, "save requested songId=${song.songId}")
+        searchService.saveSongs(listOf(song))
+        Toast.makeText(this, getString(R.string.search_saved, song.title, song.artist), Toast.LENGTH_SHORT).show()
+    }
+
+    /** Two-line rows: title + artist/album/duration. Kept dependency-free on purpose. */
+    private inner class SongAdapter : BaseAdapter() {
+        private val songs = ArrayList<Song>()
+
+        fun replace(newSongs: List<Song>) {
+            songs.clear()
+            songs.addAll(newSongs)
+            notifyDataSetChanged()
+        }
+
+        override fun getCount(): Int = songs.size
+
+        override fun getItem(position: Int): Song = songs[position]
+
+        override fun getItemId(position: Int): Long = songs[position].songId
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val view = convertView ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
+            val song = songs[position]
+            view.findViewById<TextView>(android.R.id.text1).text = song.title
+            val durationSec = song.durationMs / 1000L
+            view.findViewById<TextView>(android.R.id.text2).text =
+                "${song.artist} - ${song.album} (${durationSec / 60}:${"%02d".format(durationSec % 60)})"
+            return view
+        }
     }
 
     /** "检查 Provider 配置" button: queries our own roots via SAF and detects Poweramp. */

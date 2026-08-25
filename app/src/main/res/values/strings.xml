@@ -9,10 +9,18 @@
 	<string name="feature_poweramp_provider">✓ Poweramp Provider</string>
 	<string name="feature_test_track">✓ 测试歌曲</string>
 	<string name="feature_test_playback">✓ 测试播放</string>
-	<string name="feature_todo_search">¨ 网易云搜索</string>
+	<string name="feature_done_search">✓ 网易云搜索(第二阶段)</string>
 	<string name="feature_todo_login">¨ 网易云登录</string>
 	<string name="feature_todo_playlists">¨ 网易云歌单</string>
 	<string name="feature_todo_lyrics">¨ 网易云歌词</string>
+
+	<string name="search_header">网易云歌曲搜索(第二阶段:仅展示,点击结果保存)</string>
+	<string name="search_hint">输入关键词,如:周杰伦</string>
+	<string name="btn_search">搜索</string>
+	<string name="search_save_hint">点击搜索结果行保存到 Provider(Poweramp 刷新后可见)</string>
+	<string name="search_saved">已保存到 Provider:%1$s - %2$s</string>
+	<string name="search_empty">无搜索结果</string>
+	<string name="search_failed">搜索失败:%1$s</string>
 
 	<string name="btn_check_provider">检查 Provider 配置</string>
 	<string name="btn_open_pa_music_folders">打开 Poweramp 音乐文件夹设置</string>

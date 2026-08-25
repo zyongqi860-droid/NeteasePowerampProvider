@@ -6,7 +6,7 @@
 | 包名 / applicationId | `com.yczz.neteasepoweramp` |
 | Provider Authority | `com.yczz.neteasepoweramp.provider` |
 | 当前版本 | versionName `0.1.0-phase1`（versionCode 1，debug 变体） |
-| 当前阶段 | **第一阶段**（代码与构建已完成；真机验证待执行） |
+| 当前阶段 | **第二阶段**（网易云搜索 → Room 缓存 → Provider 展示；代码与构建完成，真机联调待执行） |
 | 状态更新日期 | 2026-08-25 |
 | 任务依据 | `C:\Users\zyongqi\Documents\# 项目任务：NeteasePowerampProvider 第一阶段.docx` |
 
@@ -154,15 +154,43 @@ openDocument / test audio opened），全部通过后再打印下方人工测试
 真实网易云歌曲与播放 URL / VIP 相关 / 评论 / 推荐 / 排行榜 / 每日推荐 /
 在线播放缓存 / 下载 / 任何接口逆向或 DRM、版权保护绕过。
 
-对应地，Manifest 未申请 INTERNET 权限，工程内不存在任何网络代码。
+对应地，第一阶段 Manifest 未申请 INTERNET 权限；第二阶段已按任务书放开 INTERNET（仅用于搜索），仍无其他权限。
 
-## 7. 第二阶段建议
+## 7. 第二阶段进度（2026-08-25）
 
-1. **先行项**：完成 §5 的真机验证清单，锁定第一阶段基线（建议同时初始化 git）。
-2. 引入 `netease/`（API 客户端）、`model/`（数据模型）、`cache/`（缓存）模块骨架（任务文档二十九节预留的扩展点）。
-3. 将 Provider 从单一固定 Track 改造为基于网易云曲库的动态层级（此时才允许 INTERNET 权限），
-   并评估 `CALL_GET_URL` 动态 URL 机制与 `openProxyFileDescriptor` 流式方案（URL 型曲目无法整文件落盘时的官方路径）。
-4. 登录态存储与日志红线（禁止记录 Cookie/Token/账号）延续第一阶段既定原则。
+按第二阶段任务书完成"搜索 → metadata → 本地数据库 → Provider 显示"，**未实现**播放 URL / 登录 / Cookie / 歌词 / 缓存下载。
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| `model/Song.kt` | ✅ | songId/title/artist/album/durationMs/coverUrl |
+| `netease/NeteaseClient.kt` | ✅ | OkHttp + org.json；`music.163.com/api/search/get` 免登录歌曲搜索；超时/非 200/坏 JSON 均转异常不崩溃 |
+| `service/SearchService.kt` | ✅ | 单线程 Executor 编排：search（回调式，UI 不做网络）与 saveSongs（REPLACE 入库）；日志 search start/result count/database insert |
+| `database/{SongEntity,SongDao,AppDatabase}.kt` | ✅ | Room 2.6.1 + KSP（Kotlin 2.1.20-1.0.32）；songs 表含 updated_at；insertSongs/getSongs/searchSongs/getSong/clearSongs |
+| `provider/ProviderCursorBuilder.kt` | ✅ | 从 Provider 抽出的行构建器：folder/testTrack/song 三类行统一投影处理 |
+| Provider 层级扩展 | ✅ | `root → root/netease_search("搜索结果") + root/test_folder(保留)`；song 文档 ID `root/netease_search/song_<songId>`（稳定，第三阶段播放复用） |
+| openDocument 对 song 的行为 | ✅ 按任务书兜底 | NetEase 歌曲暂返回第一阶段测试音频 fd（日志明确标注 placeholder），真实播放留给第三阶段 |
+| MainActivity 搜索 UI | ✅ | 关键词输入 + 搜索按钮 + 双行结果列表；点击行保存入库并 Toast；网络/DB 全在后台线程 |
+| Manifest | ✅ | 新增 INTERNET 权限（第二阶段首次放开），仍无其他权限 |
+| 编译 / lint | ✅ | `assembleDebug` BUILD SUCCESSFUL；lint 0 errors / 32 warnings（均为依赖版本类提示） |
+
+数据流：
+
+```
+MainActivity 输入"周杰伦"
+→ SearchService.search()（后台单线程）
+→ NeteaseClient.request()  [music.163.com/api/search/get]
+→ List<Song>（org.json 解析）
+→ UI 列表展示；点击行
+→ SearchService.saveSongs()
+→ Room songs 表
+→ Poweramp 扫描 queryChildDocuments(root/netease_search) 读库展示
+```
+
+第二阶段真机测试清单（任务书十一节）：搜索周杰伦出结果；Poweramp 刷新见「网易云音乐」；进入「搜索结果」看到歌曲；点击歌曲播测试音频或提示；重启手机后数据库仍在。另：第一阶段 §5 清单仍未执行（无设备）。
+
+## 8. 第三阶段建议
+
+实现网易云播放 URL 获取（评估 `CALL_GET_URL` 动态 URL 机制与 `openProxyFileDescriptor` 流式方案），让 Poweramp 通过 `root/netease_search/song_<songId>` 直接播放真实网易云歌曲；届时需处理 URL 过期、VIP/灰色曲目降级与日志红线（禁止记录 Cookie/Token）。
 
 ---
 *本文件由开发过程自动维护；阶段推进或验证完成后请同步更新 §2、§5 与完成标准勾选情况。*

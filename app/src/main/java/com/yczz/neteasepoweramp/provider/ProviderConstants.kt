@@ -13,6 +13,32 @@ object ProviderConstants {
     const val TEST_FOLDER_DOC_ID = "$ROOT_DOC_ID/test_folder"
     const val TRACK_DOC_ID = "$TEST_FOLDER_DOC_ID/track_test_001"
 
+    /**
+     * Phase-2 hierarchy under the root:
+     * ```
+     * root
+     * ├── root/netease_search              ("搜索结果", songs saved from MainActivity)
+     * │     └── root/netease_search/song_<songId>
+     * └── root/test_folder                 (phase-1 Test Music, kept for regression testing)
+     * ```
+     * Song ids stay stable across scans and are reused by phase-3 playback URL resolution.
+     */
+    const val SEARCH_FOLDER_DOC_ID = "netease_search"
+
+    /** Full document id of the search-results folder below the root document. */
+    const val SEARCH_FOLDER_PATH = "$ROOT_DOC_ID/$SEARCH_FOLDER_DOC_ID"
+
+    /** Prefix for cached NetEase songs, e.g. root/netease_search/song_186016. */
+    private const val SONG_DOC_PREFIX = "song_"
+
+    fun songDocId(songId: Long): String = "$SEARCH_FOLDER_PATH/$SONG_DOC_PREFIX$songId"
+
+    /** @return NetEase song id embedded in [documentId], or null if it is not a song id. */
+    fun parseSongId(documentId: String): Long? {
+        if (!documentId.startsWith("$SEARCH_FOLDER_PATH/$SONG_DOC_PREFIX")) return null
+        return documentId.substringAfterLast('/').toLongOrNull()
+    }
+
     const val ROOT_ID = "netease_root"
 
     /** Shown as the root name in the system picker / Poweramp Music Folders dialog. */

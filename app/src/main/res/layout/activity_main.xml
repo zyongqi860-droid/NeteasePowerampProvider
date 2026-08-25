@@ -1,89 +1,80 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
 	android:layout_width="match_parent"
 	android:layout_height="match_parent"
-	android:fillViewport="true">
+	android:orientation="vertical"
+	android:padding="16dp">
+
+	<!-- Phase 2: NetEase keyword search. Results are saved into the provider Room cache on tap. -->
+	<TextView
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:text="@string/search_header"
+		android:textStyle="bold" />
 
 	<LinearLayout
 		android:layout_width="match_parent"
 		android:layout_height="wrap_content"
-		android:orientation="vertical"
-		android:padding="16dp">
+		android:orientation="horizontal"
+		android:layout_marginTop="8dp">
 
-		<TextView
-			android:id="@+id/status"
-			android:layout_width="match_parent"
+		<EditText
+			android:id="@+id/search_keyword"
+			android:layout_width="0dp"
 			android:layout_height="wrap_content"
-			android:text="@string/main_status_idle"
-			android:textSize="14sp" />
+			android:layout_weight="1"
+			android:hint="@string/search_hint"
+			android:imeOptions="actionSearch"
+			android:inputType="text"
+			android:maxLines="1" />
 
 		<Button
-			android:id="@+id/btn_check"
-			android:onClick="checkProviderConfig"
-			android:text="@string/btn_check_provider"
-			android:layout_width="match_parent"
+			android:id="@+id/btn_search"
+			android:onClick="startSearch"
+			android:text="@string/btn_search"
+			android:layout_width="wrap_content"
 			android:layout_height="wrap_content" />
-
-		<Button
-			android:id="@+id/btn_pa_folders"
-			android:onClick="openPowerampMusicFolders"
-			android:text="@string/btn_open_pa_music_folders"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content" />
-
-		<Button
-			android:id="@+id/btn_settings"
-			android:onClick="openSettings"
-			android:text="@string/btn_open_settings"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="24dp"
-			android:text="@string/phase1_header"
-			android:textStyle="bold" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:text="@string/feature_provider_registered" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:text="@string/feature_poweramp_provider" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:text="@string/feature_test_track" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:text="@string/feature_test_playback" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="12dp"
-			android:text="@string/feature_todo_search" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:text="@string/feature_todo_login" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:text="@string/feature_todo_playlists" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:text="@string/feature_todo_lyrics" />
 	</LinearLayout>
-</ScrollView>
+
+	<TextView
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:textSize="12sp"
+		android:text="@string/search_save_hint" />
+
+	<ListView
+		android:id="@+id/search_results"
+		android:layout_width="match_parent"
+		android:layout_height="0dp"
+		android:layout_weight="1"
+		android:layout_marginTop="4dp" />
+
+	<TextView
+		android:id="@+id/status"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:layout_marginTop="8dp"
+		android:text="@string/main_status_idle"
+		android:textSize="14sp" />
+
+	<Button
+		android:id="@+id/btn_check"
+		android:onClick="checkProviderConfig"
+		android:text="@string/btn_check_provider"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content" />
+
+	<Button
+		android:id="@+id/btn_pa_folders"
+		android:onClick="openPowerampMusicFolders"
+		android:text="@string/btn_open_pa_music_folders"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content" />
+
+	<Button
+		android:id="@+id/btn_settings"
+		android:onClick="openSettings"
+		android:text="@string/btn_open_settings"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content" />
+</LinearLayout>
