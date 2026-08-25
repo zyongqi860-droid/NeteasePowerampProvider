@@ -31,6 +31,13 @@ object ProviderConstants {
     /** Prefix for cached NetEase songs, e.g. root/netease_search/song_186016. */
     private const val SONG_DOC_PREFIX = "song_"
 
+    /**
+     * Reserved song id of the phase-3 remote-stream test track ("test_remote_001" in the task
+     * spec). Seeded into Room by SearchService.ensureRemoteTestSong and resolved to a public
+     * Range-capable test MP3 by MockPlaybackResolver - no real NetEase API involved.
+     */
+    const val MOCK_REMOTE_SONG_ID = 999_999_777L
+
     fun songDocId(songId: Long): String = "$SEARCH_FOLDER_PATH/$SONG_DOC_PREFIX$songId"
 
     /** @return NetEase song id embedded in [documentId], or null if it is not a song id. */

@@ -50,8 +50,13 @@ internal object ProviderCursorBuilder {
     }
 
     /**
-     * Cached NetEase song (phase 2). DISPLAY_NAME is "<title>.mp3" and SIZE mirrors what
-     * openDocument actually serves (the test audio placeholder until phase 3 provides real files).
+     * Cached NetEase song (phase 2 display, phase 3 remote playback).
+     *
+     * COLUMN_URL=DYNAMIC_URL tells Poweramp this track's URL is fetched at playback time via
+     * CALL_GET_URL (official mechanism) - the provider then streams through PlaybackResolver.
+     * DISPLAY_NAME is "<title>.mp3"; SIZE mirrors what openDocument serves. When duration<=0
+     * the DURATION column is omitted so Poweramp reads the real duration from the stream
+     * (metadata must match the audio, task section 11).
      */
     fun fillSongRow(row: MatrixCursor.RowBuilder, song: SongEntity, servedSize: Long) {
         val displayName = buildString {
@@ -63,11 +68,14 @@ internal object ProviderCursorBuilder {
         row.add(Document.COLUMN_DISPLAY_NAME, displayName)
         row.add(Document.COLUMN_LAST_MODIFIED, song.updatedAt)
         row.add(Document.COLUMN_SIZE, servedSize)
+        row.add(TrackProviderConsts.COLUMN_URL, TrackProviderConsts.DYNAMIC_URL)
 
         row.add(MediaStore.MediaColumns.TITLE, song.title)
         row.add(MediaStore.Audio.AudioColumns.ARTIST, song.artist)
         row.add(MediaStore.Audio.AudioColumns.ALBUM, song.album)
-        row.add(MediaStore.Audio.AudioColumns.DURATION, song.duration)
-        // coverUrl is kept in Room for phase 3; thumbnails for remote covers need download logic.
+        if (song.duration > 0L) {
+            row.add(MediaStore.Audio.AudioColumns.DURATION, song.duration)
+        }
+        // coverUrl is kept in Room for a later phase; thumbnails for remote covers need download logic.
     }
 }

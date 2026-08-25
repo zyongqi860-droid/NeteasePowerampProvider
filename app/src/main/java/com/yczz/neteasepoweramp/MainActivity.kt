@@ -53,6 +53,8 @@ class MainActivity : Activity() {
             WindowInsetsCompat.CONSUMED
         }
         searchService = SearchService(this)
+        // Seed the phase-3 remote-stream test track (no-op once it exists in Room).
+        searchService.ensureRemoteTestSong()
         resultAdapter = SongAdapter()
         val resultsList = findViewById<ListView>(R.id.search_results)
         resultsList.adapter = resultAdapter

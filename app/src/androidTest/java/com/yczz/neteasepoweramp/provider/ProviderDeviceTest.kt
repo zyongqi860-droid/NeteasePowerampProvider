@@ -127,17 +127,45 @@ class ProviderDeviceTest {
     }
 
     @Test
-    fun openDocumentReturnsReadableSeekableAudioForBothNodes() {
-        AppDatabase.get(context()).songDao().insertSongs(listOf(fixtureSong()))
-        try {
-            for (docId in arrayOf(ProviderConstants.TRACK_DOC_ID, fixtureSongDocId())) {
-                resolver.openFileDescriptor(documentUri(docId), "r")!!.use { pfd ->
-                    assertTrue("fd not readable for $docId", pfd.statSize > 100_000L)
-                }
-            }
-        } finally {
-            AppDatabase.get(context()).songDao().deleteSong(fixtureSongId)
+    fun openDocumentReturnsReadableSeekableAudioForLocalTrackAndRemoteMock() {
+        // Local phase-1 track: direct file fd.
+        resolver.openFileDescriptor(documentUri(ProviderConstants.TRACK_DOC_ID), "r")!!.use { pfd ->
+            assertTrue("local fd not readable", pfd.statSize > 100_000L)
         }
+        // Remote phase-3 mock song: proxy fd backed by Range GETs. statSize can be 0/-1 for
+        // proxy fds depending on when the framework stats them, so assert on actual readability:
+        // read the first bytes and verify MP3 framing (ID3 tag or frame sync).
+        resolver.openFileDescriptor(documentUri(ProviderConstants.songDocId(ProviderConstants.MOCK_REMOTE_SONG_ID)), "r")!!.use { pfd ->
+            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                val head = ByteArray(64 * 1024)
+                var total = 0
+                while (total < head.size) {
+                    val read = input.read(head, total, head.size - total)
+                    if (read < 0) break
+                    total += read
+                }
+                assertTrue("remote stream produced no bytes", total > 0)
+                val isId3 = total >= 3 && head[0] == 'I'.code.toByte() && head[1] == 'D'.code.toByte() && head[2] == '3'.code.toByte()
+                val isFrameSync = total >= 2 && (head[0].toInt() and 0xFF) == 0xFF && (head[1].toInt() and 0xE0) == 0xE0
+                assertTrue(
+                    "remote bytes are not MP3 (total=$total, head=${head[0]}${head[1]}${head[2]}${head[3]})",
+                    isId3 || isFrameSync,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun openDocumentForUnresolvableSongFailsCleanly() {
+        // Songs without a playback source (not the seeded mock id) must surface as a clean
+        // client error, never crash Poweramp.
+        var threw = false
+        try {
+            resolver.openFileDescriptor(documentUri(ProviderConstants.songDocId(999_999_002L)), "r")?.close()
+        } catch (expected: java.io.FileNotFoundException) {
+            threw = true
+        }
+        assertTrue("unresolvable song must fail with FileNotFoundException", threw)
     }
 
     // ------------------------------------------------------------------ helpers

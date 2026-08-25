@@ -41,8 +41,10 @@ dependencies {
     implementation(libs.androidx.core)
     implementation(libs.androidx.core.ktx)
     // Phase 2: NetEase search over HTTP (OkHttp only - JSON parsed with built-in org.json) and Room cache.
+    // Phase 3: coroutines for the playback resolver/streaming layer.
     implementation(libs.okhttp)
     implementation(libs.room.runtime)
+    implementation(libs.coroutines.android)
     ksp(libs.room.compiler)
     // On-device provider contract tests (run as the app uid, so they can access the exported
     // DocumentsProvider directly - adb shell cannot, it lacks MANAGE_DOCUMENTS by design).

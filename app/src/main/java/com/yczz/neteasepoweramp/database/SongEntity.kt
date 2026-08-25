@@ -28,4 +28,20 @@ data class SongEntity(
     /** Wall clock time of the last insert/update, for future cache invalidation. */
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long,
+    // ---------------------------------------------------------------- phase 3 playback cache
+    // The columns below are a CACHE of the last resolved playback source, never the source of
+    // truth: remote URLs expire, so openDocument always re-resolves when urlExpireTime passed.
+
+    /** Identifier of the upstream source this song came from (e.g. "netease", "mock"). Empty for phase-2 rows. */
+    @ColumnInfo(name = "source_id")
+    val sourceId: String = "",
+    /** Quality label reported by the source (e.g. "320k"). Empty when unknown. */
+    @ColumnInfo(name = "quality")
+    val quality: String = "",
+    /** Last resolved playback URL; may be empty and may be expired - never persisted as permanent. */
+    @ColumnInfo(name = "last_play_url")
+    val lastPlayUrl: String = "",
+    /** Epoch ms after which [lastPlayUrl] must be re-resolved; 0 = no cached URL. */
+    @ColumnInfo(name = "url_expire_time")
+    val urlExpireTime: Long = 0L,
 )

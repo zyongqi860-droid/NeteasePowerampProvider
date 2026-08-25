@@ -30,6 +30,10 @@ interface SongDao {
     @Query("DELETE FROM songs WHERE song_id = :songId")
     fun deleteSong(songId: Long)
 
+    /** Persists the resolved playback URL cache for one song (phase 3, CachingPlaybackResolver). */
+    @Query("UPDATE songs SET last_play_url = :url, url_expire_time = :expireAt WHERE song_id = :songId")
+    fun updatePlaybackCache(songId: Long, url: String, expireAt: Long)
+
     @Query("DELETE FROM songs")
     fun clearSongs()
 }

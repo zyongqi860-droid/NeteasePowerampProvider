@@ -7,16 +7,19 @@ import com.yczz.neteasepoweramp.database.SongEntity
 import com.yczz.neteasepoweramp.model.Song
 import com.yczz.neteasepoweramp.netease.NeteaseClient
 import com.yczz.neteasepoweramp.provider.ProviderConstants
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.io.IOException
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 /**
- * Phase-2 business layer: keyword -> NetEase search -> Song list, and "save to provider" ->
- * Room. Both directions are executed on a private single thread so callers (MainActivity,
- * future UI) never do network or disk work themselves.
+ * Business layer: keyword -> NetEase search -> Song list, "save to provider" -> Room, and
+ * seeding of the phase-3 remote-test song. All work runs on [scope] (Dispatchers.IO, a
+ * SupervisorJob - no GlobalScope) so callers never do network or disk work themselves.
  *
- * Results are delivered on the calling executor thread; MainActivity hops back to the main
+ * Results are delivered on the calling coroutine thread; MainActivity hops back to the main
  * thread itself via Handler.
  */
 class SearchService(context: Context) {
@@ -33,10 +36,8 @@ class SearchService(context: Context) {
     private val client = NeteaseClient()
     private val dao = AppDatabase.get(appContext).songDao()
 
-    /** Single worker: keeps NetEase calls sequential and avoids hammering the API. */
-    private val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "netease-search").apply { isDaemon = false }
-    }
+    /** IO scope with SupervisorJob: one failed child never cancels the others. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun search(keyword: String, callback: SearchCallback) {
         val trimmed = keyword.trim()
@@ -46,7 +47,7 @@ class SearchService(context: Context) {
             return
         }
         Log.w(ProviderConstants.TAG, "search start keyword=$trimmed")
-        executor.execute {
+        scope.launch {
             try {
                 val songs = client.search(trimmed)
                 Log.i(ProviderConstants.TAG, "search result count=${songs.size}")
@@ -71,7 +72,7 @@ class SearchService(context: Context) {
     fun saveSongs(songs: List<Song>) {
         if (songs.isEmpty()) return
         val now = System.currentTimeMillis()
-        executor.execute {
+        scope.launch {
             try {
                 dao.insertSongs(songs.map { it.toEntity(now) })
                 Log.i(ProviderConstants.TAG, "database insert count=${songs.size}")
@@ -82,8 +83,40 @@ class SearchService(context: Context) {
         }
     }
 
+    /**
+     * Seeds the phase-3 remote-stream test track (task section 12: "test_remote_001") once, so
+     * Poweramp can exercise Provider -> PlaybackResolver -> remote stream without any real
+     * NetEase API. Duration stays 0: the cursor omits DURATION and Poweramp reads the real one
+     * from the stream, keeping metadata and audio consistent.
+     */
+    fun ensureRemoteTestSong() {
+        scope.launch {
+            try {
+                if (dao.getSong(ProviderConstants.MOCK_REMOTE_SONG_ID) == null) {
+                    dao.insertSongs(
+                        listOf(
+                            SongEntity(
+                                songId = ProviderConstants.MOCK_REMOTE_SONG_ID,
+                                title = REMOTE_TEST_TITLE,
+                                artist = REMOTE_TEST_ARTIST,
+                                album = REMOTE_TEST_ALBUM,
+                                duration = 0L,
+                                coverUrl = "",
+                                updatedAt = System.currentTimeMillis(),
+                                sourceId = "mock",
+                            ),
+                        ),
+                    )
+                    Log.i(ProviderConstants.TAG, "remote test song seeded songId=${ProviderConstants.MOCK_REMOTE_SONG_ID}")
+                }
+            } catch (e: Exception) {
+                Log.e(ProviderConstants.TAG, "seeding remote test song failed", e)
+            }
+        }
+    }
+
     fun shutdown() {
-        executor.shutdownNow()
+        scope.cancel()
     }
 
     private fun Song.toEntity(now: Long) = SongEntity(
@@ -95,4 +128,10 @@ class SearchService(context: Context) {
         coverUrl = coverUrl,
         updatedAt = now,
     )
+
+    private companion object {
+        const val REMOTE_TEST_TITLE = "Remote Stream Test"
+        const val REMOTE_TEST_ARTIST = "MockPlaybackResolver"
+        const val REMOTE_TEST_ALBUM = "Phase 3 Verification"
+    }
 }

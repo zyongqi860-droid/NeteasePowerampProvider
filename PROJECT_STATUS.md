@@ -6,7 +6,7 @@
 | 包名 / applicationId | `com.yczz.neteasepoweramp` |
 | Provider Authority | `com.yczz.neteasepoweramp.provider` |
 | 当前版本 | versionName `0.1.0-phase1`（versionCode 1，debug 变体） |
-| 当前阶段 | **第二阶段**（网易云搜索 → Room 缓存 → Provider 展示；代码与构建完成，真机联调待执行） |
+| 当前阶段 | **第三阶段**（动态播放 URL 架构完成并真机验证；真实网易云 URL 接入留给第四阶段） |
 | 状态更新日期 | 2026-08-25 |
 | 任务依据 | `C:\Users\zyongqi\Documents\# 项目任务：NeteasePowerampProvider 第一阶段.docx` |
 
@@ -213,9 +213,44 @@ MainActivity 输入"周杰伦"
 
 **待人工执行**（Poweramp 侧）：音乐文件夹添加 Provider、播放/seek/重启/强停测试、对照第二十七节勾选。
 
-## 8. 第三阶段建议
+## 8. 第三阶段进度（2026-08-25）
 
-实现网易云播放 URL 获取（评估 `CALL_GET_URL` 动态 URL 机制与 `openProxyFileDescriptor` 流式方案），让 Poweramp 通过 `root/netease_search/song_<songId>` 直接播放真实网易云歌曲；届时需处理 URL 过期、VIP/灰色曲目降级与日志红线（禁止记录 Cookie/Token）。
+目标"Provider 根据 songId 动态获取播放 URL 并交给 Poweramp 播放远程音频"的**架构与链路**已完成并真机验证；真实网易云 URL 接入按任务书要求**有意不做**（第四阶段）。
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| `playback/PlaybackSource.kt` | ✅ | url/mimeType/headers/expireTime/size；headers 支持未来 UA/Authorization/Cookie（当前无任何硬编码凭据） |
+| `playback/PlaybackResolver.kt` | ✅ 可替换接口 | suspend resolve(songId)；第四阶段接入合法音乐源只需替换 delegate |
+| `playback/MockPlaybackResolver.kt` | ✅ | 仅解析种子曲目 `MOCK_REMOTE_SONG_ID`（任务书 test_remote_001）→ 公共 Range 可用测试 MP3（SoundHelix，8.9MB） |
+| `playback/CachingPlaybackResolver.kt` | ✅ | URL 缓存装饰器：未过期直接用 lastPlayUrl，过期重新 resolve 并回写（URL 仅作缓存，非永久依赖） |
+| `service/AudioStreamClient.kt` | ✅ | OkHttp Range 读取；HEAD+Range 双探测长度；服务器忽略 Range 时分段丢弃兜底；416→干净 EOF；Provider 内零 HTTP 代码 |
+| `playback/AudioProxyFd.kt` | ✅ | **API 26+**：`StorageManager.openProxyFileDescriptor` + `ProxyFileDescriptorCallback`（onRead=单次 Range GET，天然支持 seek/暂停/恢复/重开）；**<26**：整文件缓存下载后给本地 fd（已注解降级路径） |
+| Provider `openDocument` | ✅ | test_track→本地 fd（不变）；song→runBlocking(IO) resolve→远程流；一切失败转 `FileNotFoundException`（Poweramp 报播放错误不崩溃） |
+| 官方 `CALL_GET_URL` | ✅ | song 行上报 `COLUMN_URL=DYNAMIC_URL`；`call(CALL_GET_URL)` 返回 url+headers bundle（官方动态 URL 机制，seek 由 Poweramp 原生处理） |
+| DB v1→v2 | ✅ | songs +`source_id/quality/last_play_url/url_expire_time`；ALTER TABLE 迁移**保留用户数据** |
+| `SearchService` 协程化 | ✅ | Executor→`CoroutineScope(SupervisorJob+IO)`（无 GlobalScope/Thread.sleep）；`ensureRemoteTestSong()` 种子 Mock 曲目 |
+| 测试 | ✅ | `ProviderDeviceTest` 增至 7 项：远程 proxy fd 读流验证 MP3 帧（ID3/帧同步）、不可解析歌曲干净失败 |
+| 编译 / lint | ✅ | `assembleDebug` 绿；lint 0 errors / 36 warnings |
+
+真机验证记录（vivo V2425A / Android 16）：**7 项 instrument 测试全绿**。日志证据：`range probe HTTP 206 total=8945229` → `stream size=8945229` → proxy fd 读出 MP3 帧数据。过程中修复：SoundHelix HEAD 响应 `Content-Length: 0` 导致 onGetSize=0（改为 HEAD 非正长度不可信，落 Range 探测）。
+
+**播放流程**：
+
+```
+Poweramp 播放 song_999999777
+├─ 路径A（官方动态URL）: call(CALL_GET_URL) → Resolver → bundle(url) → Poweramp 原生 HTTP 拉流
+└─ 路径B（openDocument）: 解析 songId → CachingPlaybackResolver
+   ├─ Room 缓存未过期 → 直接用
+   └─ 过期 → MockPlaybackResolver → PlaybackSource
+      → AudioProxyFd.openProxyFileDescriptor（onRead=Range GET）
+      → Poweramp Decoder（seek=任意 offset Range 请求）
+```
+
+**待人工**：Poweramp 实机播放 Mock 曲目（测试 2-7：暂停/恢复/拖进度/切歌/杀进程重播/断网报错）。
+
+## 9. 第四阶段建议
+
+接入真实音乐源：实现 `NeteasePlaybackResolver`（替换 Mock delegate），走合法授权路径获取播放 URL；处理 URL 过期/灰色曲目降级；日志红线（禁止记录 Cookie/Token/账号）延续。
 
 ---
 *本文件由开发过程自动维护；阶段推进或验证完成后请同步更新 §2、§5 与完成标准勾选情况。*

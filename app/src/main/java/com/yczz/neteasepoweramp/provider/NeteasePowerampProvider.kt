@@ -17,6 +17,14 @@ import com.maxmpz.poweramp.player.TrackProviderConsts
 import com.yczz.neteasepoweramp.R
 import com.yczz.neteasepoweramp.database.AppDatabase
 import com.yczz.neteasepoweramp.database.SongDao
+import com.yczz.neteasepoweramp.playback.AudioProxyFd
+import com.yczz.neteasepoweramp.playback.CachingPlaybackResolver
+import com.yczz.neteasepoweramp.playback.MockPlaybackResolver
+import com.yczz.neteasepoweramp.playback.PlaybackResolver
+import com.yczz.neteasepoweramp.service.AudioStreamClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -54,6 +62,8 @@ class NeteasePowerampProvider : DocumentsProvider() {
 
     private lateinit var testAudioManager: TestAudioManager
     private lateinit var songDao: SongDao
+    private lateinit var playbackResolver: PlaybackResolver
+    private lateinit var streamClient: AudioStreamClient
 
     override fun onCreate(): Boolean {
         val context = checkNotNull(context)
@@ -66,6 +76,10 @@ class NeteasePowerampProvider : DocumentsProvider() {
         }
         testAudioManager = TestAudioManager(context.applicationContext)
         songDao = AppDatabase.get(context.applicationContext).songDao()
+        // Phase-3 playback stack: caching decorator over the swappable source resolver.
+        // Phase 4 replaces MockPlaybackResolver with a licensed music-service implementation.
+        streamClient = AudioStreamClient()
+        playbackResolver = CachingPlaybackResolver(MockPlaybackResolver(), songDao)
         // Extract up front so the first playback does not pay for the copy; later calls are cheap existence checks.
         try {
             testAudioManager.ensureTestAudioFile()
@@ -242,8 +256,14 @@ class NeteasePowerampProvider : DocumentsProvider() {
     }
 
     /**
-     * Serves the test audio as a direct read-only file descriptor over the extracted local file.
-     * The fd is seekable, so Poweramp gets seeking/wave-seekbar/tag reading without extra protocol work.
+     * Serves audio for Poweramp.
+     *
+     * - test_track: direct read-only fd over the extracted local test file (phase-1 behavior).
+     * - netease songs: PlaybackResolver -> PlaybackSource -> remote stream.
+     *   API 26+ uses StorageManager.openProxyFileDescriptor (Range GET per read, seekable,
+     *   nothing downloaded up front); older devices fall back to a one-time cached download.
+     *   Any resolver/stream failure surfaces as FileNotFoundException so Poweramp shows a
+     *   playback error instead of crashing (task section 9).
      */
     override fun openDocument(
         documentId: String,
@@ -257,27 +277,27 @@ class NeteasePowerampProvider : DocumentsProvider() {
         }
         signal?.throwIfCanceled()
 
-        val file: File =
-            try {
-                val isNeteaseSong = ProviderConstants.parseSongId(documentId) != null
-                if (!isNeteaseSong && documentId != ProviderConstants.TRACK_DOC_ID) {
-                    throw FileNotFoundException("unknown document $documentId")
-                }
-                if (isNeteaseSong) {
-                    // Phase 2 is display-only: NetEase songs temporarily stream the bundled test
-                    // audio so Poweramp playback stays functional until phase-3 URL support lands.
-                    Log.i(TAG, "netease song requested, serving test audio placeholder documentId=$documentId")
-                } else {
-                    Log.i(TAG, "track requested documentId=$documentId")
-                }
-                testAudioManager.ensureTestAudioFile()
-            } catch (fnfe: FileNotFoundException) {
-                throw fnfe
-            } catch (th: Throwable) {
-                Log.e(TAG, "openDocument failed to prepare audio", th)
-                throw FileNotFoundException("cannot prepare test audio for $documentId")
-            }
+        val songId = ProviderConstants.parseSongId(documentId)
+        if (songId == null && documentId != ProviderConstants.TRACK_DOC_ID) {
+            throw FileNotFoundException("unknown document $documentId")
+        }
 
+        if (songId == null) {
+            Log.i(TAG, "track requested documentId=$documentId")
+            return openLocalTestAudio(documentId)
+        }
+        return openRemoteAudio(documentId, songId)
+    }
+
+    private fun openLocalTestAudio(documentId: String): ParcelFileDescriptor {
+        val file: File = try {
+            testAudioManager.ensureTestAudioFile()
+        } catch (fnfe: FileNotFoundException) {
+            throw fnfe
+        } catch (th: Throwable) {
+            Log.e(TAG, "openDocument failed to prepare audio", th)
+            throw FileNotFoundException("cannot prepare test audio for $documentId")
+        }
         Log.i(TAG, "test audio opened file=${file.name} size=${file.length()}")
         return try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -286,6 +306,36 @@ class NeteasePowerampProvider : DocumentsProvider() {
         } catch (th: Throwable) {
             Log.e(TAG, "openDocument", th)
             throw FileNotFoundException("cannot open $documentId")
+        }
+    }
+
+    /**
+     * Remote playback path. runBlocking on the binder thread is intentional: openDocument is a
+     * synchronous contract and Poweramp expects it to block until the fd exists; the network
+     * work itself happens on Dispatchers.IO / the proxy callback thread, never a main thread.
+     */
+    private fun openRemoteAudio(documentId: String, songId: Long): ParcelFileDescriptor {
+        Log.i(TAG, "track requested documentId=$documentId")
+        val source = try {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    Log.i(TAG, "resolve playback source songId=$songId")
+                    playbackResolver.resolve(songId)
+                }
+            }
+        } catch (fnfe: FileNotFoundException) {
+            throw fnfe
+        } catch (th: Throwable) {
+            Log.e(TAG, "resolve failed for songId=$songId", th)
+            throw FileNotFoundException("no playback source for $documentId")
+        }
+        return try {
+            AudioProxyFd.open(checkNotNull(context).applicationContext, source, streamClient)
+        } catch (fnfe: FileNotFoundException) {
+            throw fnfe
+        } catch (th: Throwable) {
+            Log.e(TAG, "remote stream open failed songId=$songId", th)
+            throw FileNotFoundException("cannot stream $documentId")
         }
     }
 
@@ -302,10 +352,48 @@ class NeteasePowerampProvider : DocumentsProvider() {
     }
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
-        // Phase 1 has no URL tracks, so CALL_GET_URL is not needed. CALL_RESCAN may arrive any time;
-        // returning null (like the official handleRescan does) tells Poweramp there is nothing to refresh.
         Log.w(TAG, "call method=$method arg=$arg")
+        if (method == TrackProviderConsts.CALL_GET_URL && arg != null) {
+            return handleGetUrl(arg)
+        }
+        // CALL_RESCAN may arrive any time; returning null (like the official handleRescan does)
+        // tells Poweramp there is nothing to refresh.
         return super.call(method, arg, extras)
+    }
+
+    /**
+     * Official dynamic-URL mechanism (TrackProviderConsts.DYNAMIC_URL / CALL_GET_URL): for
+     * tracks advertised with COLUMN_URL=DYNAMIC_URL, Poweramp calls this at the moment of
+     * playback instead of openDocument. We resolve through the same PlaybackResolver as the
+     * proxy-fd path and hand Poweramp the URL + headers so its own player streams (and seeks)
+     * natively. Unknown songs return null - Poweramp treats it as "no url available".
+     */
+    private fun handleGetUrl(arg: String): Bundle? {
+        val songId = ProviderConstants.parseSongId(arg) ?: run {
+            Log.w(TAG, "get_url for non-song document $arg")
+            return null
+        }
+        return try {
+            val source = runBlocking {
+                withContext(Dispatchers.IO) {
+                    Log.i(TAG, "resolve playback source (get_url) songId=$songId")
+                    playbackResolver.resolve(songId)
+                }
+            }
+            Bundle().apply {
+                putString(TrackProviderConsts.COLUMN_URL, source.url)
+                if (source.headers.isNotEmpty()) {
+                    // Single string, CRLF-separated "name: value" pairs (official bundle format).
+                    putString(
+                        TrackProviderConsts.COLUMN_HEADERS,
+                        source.headers.entries.joinToString("\r\n") { "${it.key}: ${it.value}" },
+                    )
+                }
+            }
+        } catch (th: Throwable) {
+            Log.e(TAG, "get_url resolve failed songId=$songId", th)
+            null
+        }
     }
 
     // ---------------------------------------------------------------------- helpers
