@@ -1,9 +1,11 @@
 package com.yczz.neteasepoweramp.service
 
 import android.content.Context
+import android.provider.DocumentsContract
 import android.util.Log
 import com.yczz.neteasepoweramp.database.AppDatabase
 import com.yczz.neteasepoweramp.database.SongEntity
+import com.yczz.neteasepoweramp.database.toEntity
 import com.yczz.neteasepoweramp.model.Song
 import com.yczz.neteasepoweramp.netease.NeteaseClient
 import com.yczz.neteasepoweramp.provider.ProviderConstants
@@ -76,10 +78,23 @@ class SearchService(context: Context) {
             try {
                 dao.insertSongs(songs.map { it.toEntity(now) })
                 Log.i(ProviderConstants.TAG, "database insert count=${songs.size}")
+                notifyProviderChanged()
             } catch (e: Exception) {
                 // Never crash the UI; the provider simply keeps showing the previous rows.
                 Log.e(ProviderConstants.TAG, "database insert failed", e)
             }
+        }
+    }
+
+    /** Tells SAF observers (and Poweramp, if listening) that provider content changed. */
+    private fun notifyProviderChanged() {
+        try {
+            appContext.contentResolver.notifyChange(
+                DocumentsContract.buildRootsUri(ProviderConstants.AUTHORITY),
+                null,
+            )
+        } catch (e: Exception) {
+            Log.e(ProviderConstants.TAG, "notifyChange failed", e)
         }
     }
 
@@ -118,16 +133,6 @@ class SearchService(context: Context) {
     fun shutdown() {
         scope.cancel()
     }
-
-    private fun Song.toEntity(now: Long) = SongEntity(
-        songId = songId,
-        title = title,
-        artist = artist,
-        album = album,
-        duration = durationMs,
-        coverUrl = coverUrl,
-        updatedAt = now,
-    )
 
     private companion object {
         const val REMOTE_TEST_TITLE = "Remote Stream Test"

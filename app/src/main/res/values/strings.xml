@@ -22,6 +22,14 @@
 	<string name="search_empty">无搜索结果</string>
 	<string name="search_failed">搜索失败:%1$s</string>
 
+	<string name="playlist_id_hint">歌单数字 ID(公开歌单)</string>
+	<string name="btn_import_playlist">导入歌单</string>
+	<string name="btn_sync">同步到 Poweramp</string>
+	<string name="playlist_imported">歌单已导入:%1$s(%2$d 首)</string>
+	<string name="playlist_import_failed">导入失败:%1$s</string>
+	<string name="playlist_id_invalid">请输入有效的歌单数字 ID</string>
+	<string name="sync_done">已通知 Poweramp 重新扫描</string>
+
 	<string name="btn_check_provider">检查 Provider 配置</string>
 	<string name="btn_open_pa_music_folders">打开 Poweramp 音乐文件夹设置</string>
 	<string name="btn_open_settings">打开设置页</string>

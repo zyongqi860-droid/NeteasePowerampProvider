@@ -21,6 +21,7 @@ import com.maxmpz.poweramp.player.PowerampAPI
 import com.maxmpz.poweramp.player.PowerampAPIHelper
 import com.yczz.neteasepoweramp.model.Song
 import com.yczz.neteasepoweramp.provider.ProviderConstants
+import com.yczz.neteasepoweramp.service.PlaylistService
 import com.yczz.neteasepoweramp.service.SearchService
 import com.yczz.neteasepoweramp.settings.SettingsActivity
 
@@ -34,6 +35,7 @@ import com.yczz.neteasepoweramp.settings.SettingsActivity
 class MainActivity : Activity() {
 
     private lateinit var searchService: SearchService
+    private lateinit var playlistService: PlaylistService
     private lateinit var resultAdapter: SongAdapter
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -55,6 +57,7 @@ class MainActivity : Activity() {
         searchService = SearchService(this)
         // Seed the phase-3 remote-stream test track (no-op once it exists in Room).
         searchService.ensureRemoteTestSong()
+        playlistService = PlaylistService(this)
         resultAdapter = SongAdapter()
         val resultsList = findViewById<ListView>(R.id.search_results)
         resultsList.adapter = resultAdapter
@@ -66,7 +69,70 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         searchService.shutdown()
+        playlistService.shutdown()
         super.onDestroy()
+    }
+
+    /** "导入歌单" button: fetches one public playlist by numeric id into the provider database. */
+    fun importPlaylist(view: View?) {
+        val raw = findViewById<EditText>(R.id.playlist_id).text.toString().trim()
+        val playlistId = raw.toLongOrNull()
+        if (playlistId == null || playlistId <= 0L) {
+            Toast.makeText(this, R.string.playlist_id_invalid, Toast.LENGTH_SHORT).show()
+            return
+        }
+        findViewById<View>(R.id.btn_import_playlist).isEnabled = false
+        playlistService.importPlaylist(
+            playlistId,
+            object : PlaylistService.ImportCallback {
+                override fun onImportSuccess(playlistName: String, songCount: Int) {
+                    mainHandler.post {
+                        findViewById<View>(R.id.btn_import_playlist).isEnabled = true
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.playlist_imported, playlistName, songCount),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+
+                override fun onImportError(message: String) {
+                    mainHandler.post {
+                        findViewById<View>(R.id.btn_import_playlist).isEnabled = true
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.playlist_import_failed, message),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            },
+        )
+    }
+
+    /**
+     * "同步到 Poweramp" button: notifies SAF observers and asks Poweramp (if installed) to
+     * rescan providers via its official Scanner.ACTION_SCAN_DIRS broadcast.
+     */
+    fun syncProvider(view: View?) {
+        Log.w(ProviderConstants.TAG, "sync requested")
+        try {
+            contentResolver.notifyChange(
+                DocumentsContract.buildRootsUri(ProviderConstants.AUTHORITY),
+                null,
+            )
+        } catch (e: Exception) {
+            Log.e(ProviderConstants.TAG, "notifyChange failed", e)
+        }
+        try {
+            val intent = Intent(PowerampAPI.Scanner.ACTION_SCAN_DIRS)
+            intent.setComponent(PowerampAPIHelper.getApiReceiverComponentName(this))
+            intent.putExtra(PowerampAPI.Scanner.EXTRA_SCAN_PROVIDERS, true)
+            sendBroadcast(intent)
+            Toast.makeText(this, R.string.sync_done, Toast.LENGTH_SHORT).show()
+        } catch (e: Throwable) {
+            Log.e(ProviderConstants.TAG, "poweramp scan broadcast failed", e)
+        }
     }
 
     /** "搜索" button / IME action: kicks off an async NetEase keyword search. */

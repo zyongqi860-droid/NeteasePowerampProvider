@@ -43,6 +43,30 @@
 		android:textSize="12sp"
 		android:text="@string/search_save_hint" />
 
+	<!-- Phase 4: minimal playlist import by numeric id (public playlists only). -->
+	<LinearLayout
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:orientation="horizontal"
+		android:layout_marginTop="4dp">
+
+		<EditText
+			android:id="@+id/playlist_id"
+			android:layout_width="0dp"
+			android:layout_height="wrap_content"
+			android:layout_weight="1"
+			android:hint="@string/playlist_id_hint"
+			android:inputType="number"
+			android:maxLines="1" />
+
+		<Button
+			android:id="@+id/btn_import_playlist"
+			android:onClick="importPlaylist"
+			android:text="@string/btn_import_playlist"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content" />
+	</LinearLayout>
+
 	<ListView
 		android:id="@+id/search_results"
 		android:layout_width="match_parent"
@@ -57,6 +81,13 @@
 		android:layout_marginTop="8dp"
 		android:text="@string/main_status_idle"
 		android:textSize="14sp" />
+
+	<Button
+		android:id="@+id/btn_sync"
+		android:onClick="syncProvider"
+		android:text="@string/btn_sync"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content" />
 
 	<Button
 		android:id="@+id/btn_check"

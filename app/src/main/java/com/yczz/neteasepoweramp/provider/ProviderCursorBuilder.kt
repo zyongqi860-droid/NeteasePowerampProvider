@@ -49,25 +49,40 @@ internal object ProviderCursorBuilder {
         row.add(TrackProviderConsts.COLUMN_GENRE, TestTrack.GENRE)
     }
 
+    /** Folder row for one imported playlist ("我的歌单" children). */
+    fun fillPlaylistRow(
+        row: MatrixCursor.RowBuilder,
+        documentId: String,
+        displayName: String,
+        lastModified: Long,
+    ) {
+        row.add(Document.COLUMN_DOCUMENT_ID, documentId)
+        row.add(Document.COLUMN_MIME_TYPE, Document.MIME_TYPE_DIR)
+        row.add(Document.COLUMN_DISPLAY_NAME, displayName)
+        row.add(Document.COLUMN_LAST_MODIFIED, lastModified)
+        row.add(TrackProviderConsts.COLUMN_FLAGS, TrackProviderConsts.FLAG_NO_SUBDIRS)
+    }
+
     /**
      * Cached NetEase song (phase 2 display, phase 3 remote playback).
      *
-     * COLUMN_URL=DYNAMIC_URL tells Poweramp this track's URL is fetched at playback time via
-     * CALL_GET_URL (official mechanism) - the provider then streams through PlaybackResolver.
-     * DISPLAY_NAME is "<title>.mp3"; SIZE mirrors what openDocument serves. When duration<=0
-     * the DURATION column is omitted so Poweramp reads the real duration from the stream
-     * (metadata must match the audio, task section 11).
+     * [documentId] is passed in because the same song can appear under 搜索结果 and inside
+     * playlists with different document paths. COLUMN_URL=DYNAMIC_URL tells Poweramp this
+     * track's URL is fetched at playback time via CALL_GET_URL (official mechanism). When
+     * duration<=0 the DURATION column is omitted so Poweramp reads the real duration from the
+     * stream (metadata must match the audio, task section 11).
      */
-    fun fillSongRow(row: MatrixCursor.RowBuilder, song: SongEntity, servedSize: Long) {
+    fun fillSongRow(row: MatrixCursor.RowBuilder, documentId: String, song: SongEntity, servedSize: Long) {
         val displayName = buildString {
             append(song.title.ifEmpty { "song_${song.songId}" })
             append(".mp3")
         }
-        row.add(Document.COLUMN_DOCUMENT_ID, ProviderConstants.songDocId(song.songId))
+        row.add(Document.COLUMN_DOCUMENT_ID, documentId)
         row.add(Document.COLUMN_MIME_TYPE, TestTrack.MIME_TYPE)
         row.add(Document.COLUMN_DISPLAY_NAME, displayName)
         row.add(Document.COLUMN_LAST_MODIFIED, song.updatedAt)
         row.add(Document.COLUMN_SIZE, servedSize)
+        row.add(Document.COLUMN_FLAGS, Document.FLAG_SUPPORTS_THUMBNAIL)
         row.add(TrackProviderConsts.COLUMN_URL, TrackProviderConsts.DYNAMIC_URL)
 
         row.add(MediaStore.MediaColumns.TITLE, song.title)
@@ -76,6 +91,6 @@ internal object ProviderCursorBuilder {
         if (song.duration > 0L) {
             row.add(MediaStore.Audio.AudioColumns.DURATION, song.duration)
         }
-        // coverUrl is kept in Room for a later phase; thumbnails for remote covers need download logic.
+        // coverUrl feeds openDocumentThumbnail via AlbumArtService (phase 4).
     }
 }

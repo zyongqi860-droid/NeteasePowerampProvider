@@ -62,11 +62,59 @@ class ProviderDeviceTest {
     }
 
     @Test
-    fun rootListsSearchFolderAndTestFolder() {
+    fun rootListsAllFolders() {
         childDocuments(ProviderConstants.ROOT_DOC_ID).use { c ->
             val ids = collectColumn(c, DocumentsContract.Document.COLUMN_DOCUMENT_ID)
             assertTrue("search folder missing: $ids", ids.contains(ProviderConstants.SEARCH_FOLDER_PATH))
+            assertTrue("playlists folder missing: $ids", ids.contains(ProviderConstants.PLAYLISTS_FOLDER_PATH))
             assertTrue("test folder missing: $ids", ids.contains(ProviderConstants.TEST_FOLDER_DOC_ID))
+        }
+    }
+
+    @Test
+    fun importedPlaylistIsListedWithOrderedSongs() {
+        val dao = AppDatabase.get(context()).songDao()
+        val playlistDao = AppDatabase.get(context()).playlistDao()
+        val pid = 888_888_001L
+        val songA = fixtureSong().copy(songId = 999_999_012L, title = "A曲")
+        val songB = fixtureSong().copy(songId = 999_999_011L, title = "B曲")
+        dao.insertSongs(listOf(songA, songB))
+        playlistDao.insertPlaylists(
+            listOf(
+                com.yczz.neteasepoweramp.database.PlaylistEntity(
+                    playlistId = pid,
+                    name = "测试歌单",
+                    coverUrl = "",
+                    trackCount = 2,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            ),
+        )
+        // Deliberately store B before A: the provider must honor playlist_tracks positions.
+        playlistDao.replacePlaylistTracks(
+            pid,
+            listOf(
+                com.yczz.neteasepoweramp.database.PlaylistTrackEntity(pid, songA.songId, 0),
+                com.yczz.neteasepoweramp.database.PlaylistTrackEntity(pid, songB.songId, 1),
+            ),
+        )
+        try {
+            val playlistDocId = ProviderConstants.playlistDocId(pid)
+            childDocuments(ProviderConstants.PLAYLISTS_FOLDER_PATH).use { c ->
+                val ids = collectColumn(c, DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                assertTrue("imported playlist missing: $ids", ids.contains(playlistDocId))
+            }
+            childDocuments(playlistDocId).use { c ->
+                val names = collectColumn(c, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                assertEquals("playlist order must follow positions", listOf("A曲.mp3", "B曲.mp3"), names)
+            }
+            document(ProviderConstants.playlistSongDocId(pid, songA.songId)).use { c ->
+                assertTrue("playlist song document query failed", c.moveToFirst())
+            }
+        } finally {
+            playlistDao.deletePlaylist(pid)
+            dao.deleteSong(songA.songId)
+            dao.deleteSong(songB.songId)
         }
     }
 

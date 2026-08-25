@@ -14,11 +14,14 @@ object ProviderConstants {
     const val TRACK_DOC_ID = "$TEST_FOLDER_DOC_ID/track_test_001"
 
     /**
-     * Phase-2 hierarchy under the root:
+     * Phase-4 hierarchy under the root:
      * ```
      * root
      * ├── root/netease_search              ("搜索结果", songs saved from MainActivity)
      * │     └── root/netease_search/song_<songId>
+     * ├── root/netease_playlists           ("我的歌单", imported playlists)
+     * │     └── root/netease_playlists/pl_<playlistId>
+     * │           └── root/netease_playlists/pl_<playlistId>/song_<songId>
      * └── root/test_folder                 (phase-1 Test Music, kept for regression testing)
      * ```
      * Song ids stay stable across scans and are reused by phase-3 playback URL resolution.
@@ -31,6 +34,19 @@ object ProviderConstants {
     /** Prefix for cached NetEase songs, e.g. root/netease_search/song_186016. */
     private const val SONG_DOC_PREFIX = "song_"
 
+    /** "我的歌单" folder (phase 4). */
+    const val PLAYLISTS_FOLDER_DOC_ID = "netease_playlists"
+
+    /** Full document id of the playlists folder below the root document. */
+    const val PLAYLISTS_FOLDER_PATH = "$ROOT_DOC_ID/$PLAYLISTS_FOLDER_DOC_ID"
+
+    private const val PLAYLIST_DOC_PREFIX = "pl_"
+
+    fun playlistDocId(playlistId: Long): String = "$PLAYLISTS_FOLDER_PATH/$PLAYLIST_DOC_PREFIX$playlistId"
+
+    fun playlistSongDocId(playlistId: Long, songId: Long): String =
+        "${playlistDocId(playlistId)}/$SONG_DOC_PREFIX$songId"
+
     /**
      * Reserved song id of the phase-3 remote-stream test track ("test_remote_001" in the task
      * spec). Seeded into Room by SearchService.ensureRemoteTestSong and resolved to a public
@@ -40,10 +56,22 @@ object ProviderConstants {
 
     fun songDocId(songId: Long): String = "$SEARCH_FOLDER_PATH/$SONG_DOC_PREFIX$songId"
 
-    /** @return NetEase song id embedded in [documentId], or null if it is not a song id. */
+    /**
+     * @return NetEase song id embedded in [documentId], or null if it is not a song id.
+     * Accepts songs in any folder (search results and playlist members alike): the song suffix
+     * is always "song_<digits>".
+     */
     fun parseSongId(documentId: String): Long? {
-        if (!documentId.startsWith("$SEARCH_FOLDER_PATH/$SONG_DOC_PREFIX")) return null
-        return documentId.substringAfter(SONG_DOC_PREFIX, "").toLongOrNull()
+        val marker = "/$SONG_DOC_PREFIX"
+        if (!documentId.contains(marker)) return null
+        return documentId.substringAfterLast(marker).toLongOrNull()
+    }
+
+    /** @return playlist id for "root/netease_playlists/pl_<id>" (with or without a song suffix). */
+    fun parsePlaylistId(documentId: String): Long? {
+        val marker = "$PLAYLISTS_FOLDER_PATH/$PLAYLIST_DOC_PREFIX"
+        if (!documentId.startsWith(marker)) return null
+        return documentId.substringAfter(PLAYLIST_DOC_PREFIX).substringBefore('/').toLongOrNull()
     }
 
     const val ROOT_ID = "netease_root"

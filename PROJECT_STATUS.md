@@ -6,7 +6,7 @@
 | 包名 / applicationId | `com.yczz.neteasepoweramp` |
 | Provider Authority | `com.yczz.neteasepoweramp.provider` |
 | 当前版本 | versionName `0.1.0-phase1`（versionCode 1，debug 变体） |
-| 当前阶段 | **第三阶段**（动态播放 URL 架构完成并真机验证；真实网易云 URL 接入留给第四阶段） |
+| 当前阶段 | **第四阶段**（网易云数据源模块：搜索增强/封面/歌单/用户状态；真实播放 URL 仍未接入） |
 | 状态更新日期 | 2026-08-25 |
 | 任务依据 | `C:\Users\zyongqi\Documents\# 项目任务：NeteasePowerampProvider 第一阶段.docx` |
 
@@ -248,9 +248,33 @@ Poweramp 播放 song_999999777
 
 **待人工**：Poweramp 实机播放 Mock 曲目（测试 2-7：暂停/恢复/拖进度/切歌/杀进程重播/断网报错）。
 
-## 9. 第四阶段建议
+## 9. 第四阶段进度（2026-08-25）
 
-接入真实音乐源：实现 `NeteasePlaybackResolver`（替换 Mock delegate），走合法授权路径获取播放 URL；处理 URL 过期/灰色曲目降级；日志红线（禁止记录 Cookie/Token/账号）延续。
+网易云数据源模块完成：搜索增强（artistId/albumId/source）、封面缓存、歌单导入、用户状态基础设施。**播放 URL 仍走 Mock**（spec 十四：网易云播放模块只需未来实现 Resolver 接口）。
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| `model/Song.kt` | ✅ | +artistId/albumId/source（固定 "netease"，为多源扩展预留） |
+| `model/Playlist.kt` `PlaylistDetail` | ✅ | playlist + 有序歌曲集合 |
+| `model/UserSession.kt` + `SessionManager` | ✅ | SharedPreferences 存授权状态/用户ID/更新时间；**无明文密码/Cookie/Token**；当前匿名占位（无登录流程） |
+| DB v2→v3 | ✅ | songs +`source/artist_id/album_id`；新表 `albums`、`playlists`、`playlist_tracks`（FK CASCADE + 索引）；ALTER 迁移保留用户数据 |
+| `NeteaseClient` | ✅ | 搜索解析补 artistId/albumId；+`fetchPlaylist`（公开歌单匿名可读，code 301 → "requires login" 明确报错不绕过）；trackIds 顺序保序 |
+| `service/PlaylistService` | ✅ | 导入歌单 → songs+playlists+playlist_tracks 三表落库（REPLACE 幂等）；失败分类回调 |
+| `service/AlbumArtService` | ✅ | coverUrl → `cache/images/`；网易云 CDN `?param=350y350` 缩小体积；per-URL 锁去重并发 |
+| Provider 层级 | ✅ | root → 搜索结果 + **我的歌单** + Test Music（保留）；歌单文档 ID `root/netease_playlists/pl_<id>`，歌单内歌曲 `.../song_<songId>`；parseSongId 泛化为任意 `/song_<id>` 后缀 |
+| 封面缩略图 | ✅ | song 行 FLAG_SUPPORTS_THUMBNAIL；openDocumentThumbnail → AlbumArtService 缓存优先，失败 FNFE（Poweramp 跳过不崩） |
+| 同步机制 | ✅ | 保存/导入后 `notifyChange`；UI"同步到 Poweramp"按钮发官方 `Scanner.ACTION_SCAN_DIRS`（`scanProviders=true`）广播 |
+| UI | ✅ | 搜索/保存保留 + 歌单 ID 导入 + 同步按钮（最小 UI） |
+| 测试 | ✅ | `ProviderDeviceTest` 8 项：root 三节点、歌单导入有序列表（position 保序）、歌单内歌曲文档可查 |
+| 编译 / lint | ✅ | `assembleDebug` 绿；lint 0 errors / 41 warnings |
+
+真机验证（vivo V2425A）：**8 项 instrument 测试全绿**。过程中修复：手写迁移 SQL 误用 Room schema dump 语法（`INDEX ...` 内嵌 CREATE TABLE → 独立 `CREATE INDEX`）；`computeIfAbsent` API 24 限制 → `putIfAbsent` 兼容写法；`assembleDebugAndroidTest` 不重打包 app APK 导致装旧包的构建陷阱（记录在案：改 APK 代码后必须跑 `assembleDebug`）。
+
+**待人工**：App 内搜索"逃跑计划/夜空中最亮的星/成都"核对 metadata；导入公开歌单后 Poweramp 查看「我的歌单」；封面显示；断网搜索不崩溃。
+
+## 10. 第五阶段建议
+
+完善播放体验：播放队列、歌词同步、音频缓存、后台服务、通知栏控制、Android Auto；届时实现 `NeteasePlaybackResolver`（合法授权路径）替换 Mock。
 
 ---
 *本文件由开发过程自动维护；阶段推进或验证完成后请同步更新 §2、§5 与完成标准勾选情况。*

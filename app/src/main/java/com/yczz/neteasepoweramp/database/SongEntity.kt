@@ -28,6 +28,16 @@ data class SongEntity(
     /** Wall clock time of the last insert/update, for future cache invalidation. */
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long,
+    // ---------------------------------------------------------------- phase 4 source metadata
+    /** Upstream source tag, e.g. "netease" (task section 3: fixed per source, extensible). */
+    @ColumnInfo(name = "source", defaultValue = "netease")
+    val source: String = "netease",
+    /** Source artist id; 0 when the API did not provide one. */
+    @ColumnInfo(name = "artist_id", defaultValue = "0")
+    val artistId: Long = 0L,
+    /** Source album id; 0 when the API did not provide one. */
+    @ColumnInfo(name = "album_id", defaultValue = "0")
+    val albumId: Long = 0L,
     // ---------------------------------------------------------------- phase 3 playback cache
     // The columns below are a CACHE of the last resolved playback source, never the source of
     // truth: remote URLs expire, so openDocument always re-resolves when urlExpireTime passed.

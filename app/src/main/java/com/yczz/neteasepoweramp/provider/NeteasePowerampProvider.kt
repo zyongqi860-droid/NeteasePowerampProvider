@@ -16,11 +16,13 @@ import android.util.Log
 import com.maxmpz.poweramp.player.TrackProviderConsts
 import com.yczz.neteasepoweramp.R
 import com.yczz.neteasepoweramp.database.AppDatabase
+import com.yczz.neteasepoweramp.database.PlaylistDao
 import com.yczz.neteasepoweramp.database.SongDao
 import com.yczz.neteasepoweramp.playback.AudioProxyFd
 import com.yczz.neteasepoweramp.playback.CachingPlaybackResolver
 import com.yczz.neteasepoweramp.playback.MockPlaybackResolver
 import com.yczz.neteasepoweramp.playback.PlaybackResolver
+import com.yczz.neteasepoweramp.service.AlbumArtService
 import com.yczz.neteasepoweramp.service.AudioStreamClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -62,6 +64,8 @@ class NeteasePowerampProvider : DocumentsProvider() {
 
     private lateinit var testAudioManager: TestAudioManager
     private lateinit var songDao: SongDao
+    private lateinit var playlistDao: PlaylistDao
+    private lateinit var albumArtService: AlbumArtService
     private lateinit var playbackResolver: PlaybackResolver
     private lateinit var streamClient: AudioStreamClient
 
@@ -76,6 +80,8 @@ class NeteasePowerampProvider : DocumentsProvider() {
         }
         testAudioManager = TestAudioManager(context.applicationContext)
         songDao = AppDatabase.get(context.applicationContext).songDao()
+        playlistDao = AppDatabase.get(context.applicationContext).playlistDao()
+        albumArtService = AlbumArtService(context.applicationContext)
         // Phase-3 playback stack: caching decorator over the swappable source resolver.
         // Phase 4 replaces MockPlaybackResolver with a licensed music-service implementation.
         streamClient = AudioStreamClient()
@@ -144,6 +150,19 @@ class NeteasePowerampProvider : DocumentsProvider() {
                         }
                     }
 
+                ProviderConstants.PLAYLISTS_FOLDER_PATH ->
+                    MatrixCursor(resolveDocumentProjection(projection)).apply {
+                        newRow().apply {
+                            ProviderCursorBuilder.fillFolderRow(
+                                this,
+                                documentId,
+                                PLAYLISTS_FOLDER_DISPLAY_NAME,
+                                apkInstallTime,
+                                TrackProviderConsts.FLAG_NO_SUBDIRS,
+                            )
+                        }
+                    }
+
                 ProviderConstants.TEST_FOLDER_DOC_ID ->
                     MatrixCursor(resolveDocumentProjection(projection)).apply {
                         newRow().apply {
@@ -163,12 +182,28 @@ class NeteasePowerampProvider : DocumentsProvider() {
                     }
 
                 else -> {
-                    val songId = ProviderConstants.parseSongId(documentId)
-                    if (songId == null) throw FileNotFoundException("unknown document $documentId")
-                    val song = songDao.getSong(songId)
-                        ?: throw FileNotFoundException("song $songId is not saved in the provider database")
-                    MatrixCursor(resolveTrackProjection(projection)).apply {
-                        ProviderCursorBuilder.fillSongRow(newRow(), song, servedSongSize())
+                    val playlistId = ProviderConstants.parsePlaylistId(documentId)
+                    if (playlistId != null) {
+                        val playlist = playlistDao.getPlaylist(playlistId)
+                            ?: throw FileNotFoundException("playlist $playlistId is not imported")
+                        MatrixCursor(resolveDocumentProjection(projection)).apply {
+                            newRow().apply {
+                                ProviderCursorBuilder.fillPlaylistRow(
+                                    this,
+                                    documentId,
+                                    playlist.name,
+                                    playlist.updatedAt,
+                                )
+                            }
+                        }
+                    } else {
+                        val songId = ProviderConstants.parseSongId(documentId)
+                        if (songId == null) throw FileNotFoundException("unknown document $documentId")
+                        val song = songDao.getSong(songId)
+                            ?: throw FileNotFoundException("song $songId is not saved in the provider database")
+                        MatrixCursor(resolveTrackProjection(projection)).apply {
+                            ProviderCursorBuilder.fillSongRow(newRow(), documentId, song, servedSongSize())
+                        }
                     }
                 }
             }
@@ -206,6 +241,15 @@ class NeteasePowerampProvider : DocumentsProvider() {
                         newRow().apply {
                             ProviderCursorBuilder.fillFolderRow(
                                 this,
+                                ProviderConstants.PLAYLISTS_FOLDER_PATH,
+                                PLAYLISTS_FOLDER_DISPLAY_NAME,
+                                apkInstallTime,
+                                TrackProviderConsts.FLAG_NO_SUBDIRS,
+                            )
+                        }
+                        newRow().apply {
+                            ProviderCursorBuilder.fillFolderRow(
+                                this,
                                 ProviderConstants.TEST_FOLDER_DOC_ID,
                                 ProviderConstants.TEST_FOLDER_DISPLAY_NAME,
                                 apkInstallTime,
@@ -220,7 +264,29 @@ class NeteasePowerampProvider : DocumentsProvider() {
                     Log.i(TAG, "provider query songs count=${songs.size}")
                     MatrixCursor(resolveTrackProjection(projection)).apply {
                         for (song in songs) {
-                            ProviderCursorBuilder.fillSongRow(newRow(), song, servedSongSize())
+                            ProviderCursorBuilder.fillSongRow(
+                                newRow(),
+                                ProviderConstants.songDocId(song.songId),
+                                song,
+                                servedSongSize(),
+                            )
+                        }
+                    }
+                }
+
+                ProviderConstants.PLAYLISTS_FOLDER_PATH -> {
+                    val playlists = playlistDao.getPlaylists()
+                    Log.i(TAG, "provider query playlists count=${playlists.size}")
+                    MatrixCursor(resolveDocumentProjection(projection)).apply {
+                        for (playlist in playlists) {
+                            newRow().apply {
+                                ProviderCursorBuilder.fillPlaylistRow(
+                                    this,
+                                    ProviderConstants.playlistDocId(playlist.playlistId),
+                                    playlist.name,
+                                    playlist.updatedAt,
+                                )
+                            }
                         }
                     }
                 }
@@ -230,7 +296,22 @@ class NeteasePowerampProvider : DocumentsProvider() {
                         ProviderCursorBuilder.fillTestTrackRow(newRow(), testAudioManager.fileSizeOrFallback(), apkInstallTime)
                     }
 
-                else -> throw FileNotFoundException("unknown parent document $parentDocumentId")
+                else -> {
+                    val playlistId = ProviderConstants.parsePlaylistId(parentDocumentId)
+                        ?: throw FileNotFoundException("unknown parent document $parentDocumentId")
+                    val songs = playlistDao.getPlaylistSongs(playlistId)
+                    Log.i(TAG, "provider query playlist songs count=${songs.size} playlistId=$playlistId")
+                    MatrixCursor(resolveTrackProjection(projection)).apply {
+                        for (song in songs) {
+                            ProviderCursorBuilder.fillSongRow(
+                                newRow(),
+                                ProviderConstants.playlistSongDocId(playlistId, song.songId),
+                                song,
+                                servedSongSize(),
+                            )
+                        }
+                    }
+                }
             }
         } catch (fnfe: FileNotFoundException) {
             throw fnfe
@@ -240,18 +321,30 @@ class NeteasePowerampProvider : DocumentsProvider() {
         }
     }
 
-    /** Album art for the test track (only advertised via FLAG_SUPPORTS_THUMBNAIL on the track row). */
+    /** Album art: test track uses the bundled cover; songs fetch/cache via AlbumArtService (phase 4). */
     override fun openDocumentThumbnail(
         documentId: String,
         sizeHint: Point?,
         signal: CancellationSignal?,
     ): AssetFileDescriptor? {
         Log.w(TAG, "openDocumentThumbnail documentId=$documentId sizeHint=$sizeHint")
-        if (documentId != ProviderConstants.TRACK_DOC_ID) throw FileNotFoundException(documentId)
+        val songId = ProviderConstants.parseSongId(documentId)
+        if (songId == null) {
+            if (documentId != ProviderConstants.TRACK_DOC_ID) throw FileNotFoundException(documentId)
+            return try {
+                checkNotNull(context).resources.openRawResourceFd(R.raw.test_cover)
+            } catch (e: IOException) {
+                throw FileNotFoundException("no thumbnail for $documentId: ${e.message}")
+            }
+        }
+        val song = songDao.getSong(songId) ?: throw FileNotFoundException(documentId)
+        val cover = albumArtService.getCachedOrFetch(song.coverUrl)
+            ?: throw FileNotFoundException("no artwork for $documentId")
         return try {
-            checkNotNull(context).resources.openRawResourceFd(R.raw.test_cover)
+            val pfd = ParcelFileDescriptor.open(cover, ParcelFileDescriptor.MODE_READ_ONLY)
+            AssetFileDescriptor(pfd, 0, pfd.statSize)
         } catch (e: IOException) {
-            throw FileNotFoundException("no thumbnail for $documentId: ${e.message}")
+            throw FileNotFoundException("cannot open artwork for $documentId: ${e.message}")
         }
     }
 
@@ -426,6 +519,9 @@ class NeteasePowerampProvider : DocumentsProvider() {
 
         /** Label of the "搜索结果" folder shown in Poweramp and the system picker. */
         const val SEARCH_FOLDER_DISPLAY_NAME = "搜索结果"
+
+        /** Label of the "我的歌单" folder (phase 4). */
+        const val PLAYLISTS_FOLDER_DISPLAY_NAME = "我的歌单"
 
         val DEFAULT_ROOT_PROJECTION = arrayOf(
             Root.COLUMN_ROOT_ID,
