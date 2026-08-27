@@ -1,8 +1,8 @@
 # NeteasePowerampProvider 项目状态
 
-> **最后更新：2026-08-27（第二轮会话结束）**
-> **当前阶段：第五阶段完成 ✅ + VIP 登录功能（待用户实测）**
-> **版本：0.6.1-phase5 (versionCode 8)**
+> **最后更新：2026-08-27（短信验证码登录）**
+> **当前阶段：第五阶段完成 ✅ + VIP 短信登录（待用户实测）**
+> **版本：0.8.0-sms-login (versionCode 10)**
 
 ---
 
@@ -13,7 +13,7 @@
 - 项目最终目标：让网易云音乐作为数据源接入 Poweramp，用户在 Poweramp 内搜索、浏览、播放网易云歌曲
 - **Poweramp = 唯一播放器**，本项目 = Provider/数据源适配层
 - **最终目标已达成**：2026-08-27 真机验证，Poweramp 通过 provider 成功播放网易云歌曲出声（用户确认）
-- 当前待办：用户实测「手机号登录」→ VIP 歌曲整首播放（功能已实现并装机）
+- 当前待办：用户实测「短信验证码登录」→ VIP 歌曲整首播放（功能已实现，待装机）
 - **最重要的运维教训**：`./gradlew connectedDebugAndroidTest` 跑完会**自动卸载 app**（连带清掉 Room 数据、Poweramp 的 SAF URI 授权、系统 provider 索引），日常装机用 `adb install -r`，切勿随手跑 connected 测试
 - 下一步任务：见 §10
 
@@ -48,7 +48,7 @@
 | 第三阶段 | ✅ 完成 | 动态播放 URL（PlaybackResolver/AudioProxyFd/AudioStreamClient/CALL_GET_URL） |
 | 第四阶段 | ✅ 完成 | 搜索增强、专辑封面缓存、歌单、Room v4 |
 | 第五阶段 | ✅ 完成 | 架构纠偏 + 修复播放链路 + **真机出声**（2026-08-27） |
-| VIP 登录 | 🔄 待实测 | 手机号登录(weapi) + Cookie 注入已实现装机，等用户实测整首播放 |
+| VIP 登录 | 🔄 待实测 | 短信验证码登录(eapi) + 扫码备用(GET unikey) + Cookie 注入 |
 
 ---
 
@@ -165,14 +165,15 @@ ids=[5257138]      → {"data":[{"id":5257138,"url":"http://m801.music.126.net/.
 
 ```
 SettingsActivity
-├── 手机号登录（推荐）
-│     → NeteaseClient.loginCellphone(phone, "86", password)
-│     → WeapiCrypto.encrypt({phone, countrycode, md5(password), rememberLogin})
-│     → POST https://music.163.com/weapi/login/cellphone
+├── 短信验证码登录（推荐）
+│     → NeteaseClient.sendCaptcha(phone, "86")
+│     → EapiCrypto.encrypt → POST https://interface.music.163.com/eapi/sms/captcha/sent
+│     → NeteaseClient.loginCellphoneCaptcha(phone, "86", captcha)
+│     → POST https://interface.music.163.com/eapi/w/login/cellphone
 │     → Set-Cookie: MUSIC_U=... → NeteaseCookieStore 保存
-│     → SongDao.clearPlaybackCache()（丢弃匿名试听 URL 缓存）
+│     → SongDao.clearPlaybackCache()
+├── 扫码登录（备用；unikey/轮询走 GET /api，weapi POST 会被 CDN 清空）
 └── 手动粘贴 MUSIC_U（兜底，浏览器 F12 获取）
-      → 同样走 CookieStore + 清缓存
 
 播放链路（带账号）：
 Poweramp CALL_GET_URL / openDocument
@@ -310,15 +311,17 @@ adb logcat -d -s NeteasePowerampProvider:V
 
 ### 立即（高优先级）
 
-1. **用户实测手机号登录 + VIP 整首播放**（功能已装机）
-   - 成功：日志应显示 `resolve playback source (get_url) songId=1927421982` 且 Poweramp 播满 3:29
-   - 若登录报 code=405/406 风控：引导用户用「手动粘贴 Cookie」兜底
+1. **用户实测短信验证码登录 + VIP 整首播放**（功能已实现，待 `adb install -r`）
+   - 设置页：手机号 → 获取验证码 → 填短信 → 登录
+   - 成功：显示昵称+VIP，Poweramp 播满整首（ESCAPE 3:29）
+   - 短信失败（code=-460 风控）：用扫码登录（已改为 GET `/api/login/qrcode/unikey`，不再走被 CDN 清空的 weapi）
+   - 仍失败：手动粘贴 MUSIC_U
    - 若仍 30 秒：查 `adb logcat -d -s NeteasePowerampProvider:V` 确认 cookie 头是否带上
 2. **更新本文档**验证表 §8
 
 ### 后续（低优先级）
 
-3. **登录风控对抗**：若手机号登录频繁触发风控，可考虑实现二维码登录（`/weapi/login/qrcode/unikey` + 轮询，同样走 WeapiCrypto，端点字段名需实测）
+3. **登录风控**：weapi POST 会被 CDN 清空（HTTP 200 空 body）；短信/登录必须走 `interface.music.163.com/eapi` + `EapiCrypto`。二维码 unikey/轮询用明文 GET 即可。
 4. **歌词暴露**：LyricService 已实现但未接入 Provider（Poweramp 支持 `FLAG_HAS_LYRICS`）
 5. **播放历史完善**：目前只记录 play request（completed=false）
 6. **Room 正式迁移**：version 4 仍是 `fallbackToDestructiveMigration()`，升级丢数据（卸载场景已经历过一次）
@@ -365,8 +368,8 @@ NeteasePowerampProvider/
         │   │   │   └── AlbumArtService.kt
         │   │   ├── netease/
         │   │   │   ├── NeteaseClient.kt          # +login/verify/cookie
-        │   │   │   ├── NeteaseCookieStore.kt     # 新增
-        │   │   │   └── WeapiCrypto.kt            # 新增：weapi 加密
+        │   │   │   ├── NeteaseCookieStore.kt     # MUSIC_U 存取
+        │   │   │   └── EapiCrypto.kt             # eapi AES-ECB（短信/登录）
         │   │   ├── database/                     # Room v4
         │   │   │   ├── AppDatabase.kt / SongDao.kt(+clearPlaybackCache) / SongEntity.kt
         │   │   │   ├── PlaylistDao.kt / PlaylistEntity.kt / PlaylistTrackEntity.kt
@@ -377,7 +380,7 @@ NeteasePowerampProvider/
         │   │   ├── model/
         │   │   │   ├── Song.kt / Playlist.kt / SessionManager.kt / UserSession.kt
         │   │   └── settings/
-        │   │       └── SettingsActivity.kt       # +手机号登录 +Cookie 粘贴
+        │   │       └── SettingsActivity.kt       # 短信登录 + 扫码备用 + Cookie 粘贴
         │   └── res/
         │       ├── layout/activity_main.xml
         │       ├── layout/activity_settings.xml  # +登录区 +cookie区
@@ -395,8 +398,9 @@ NeteasePowerampProvider/
 | 需要修改什么 | 文件 | 方法/位置 |
 |-------------|------|-----------|
 | song/url 请求（参数/码率/cookie） | `playback/NeteasePlaybackResolver.kt` | `resolveNeteaseUrl()` + companion 常量 |
-| weapi 加密 | `netease/WeapiCrypto.kt` | `encrypt()` |
-| 手机号登录 | `netease/NeteaseClient.kt` | `loginCellphone()` |
+| eapi 加密 | `netease/EapiCrypto.kt` | `encrypt()` |
+| 短信验证码 | `netease/NeteaseClient.kt` | `sendCaptcha()` / `loginCellphoneCaptcha()` |
+| 扫码 unikey/轮询 | `netease/NeteaseClient.kt` | `createQrKey()` / `pollQrLogin()`（GET /api） |
 | cookie 存取 | `netease/NeteaseCookieStore.kt` | 全部 |
 | cookie 变更清缓存 | `database/SongDao.kt` | `clearPlaybackCache()` |
 | 登录/cookie UI | `settings/SettingsActivity.kt` | onCreate |

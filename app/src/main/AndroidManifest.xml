@@ -48,6 +48,12 @@
             android:label="@string/settings_title"
             android:exported="false" />
 
+        <activity
+            android:name=".settings.WebLoginActivity"
+            android:label="@string/web_login_title"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
     </application>
 
 </manifest>

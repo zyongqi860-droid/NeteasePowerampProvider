@@ -15,3 +15,15 @@ fun Song.toEntity(now: Long): SongEntity = SongEntity(
     artistId = artistId,
     albumId = albumId,
 )
+
+fun SongEntity.toSong(): Song = Song(
+    songId = songId,
+    title = title,
+    artist = artist,
+    artistId = artistId,
+    album = album,
+    albumId = albumId,
+    durationMs = duration,
+    coverUrl = coverUrl,
+    source = source,
+)

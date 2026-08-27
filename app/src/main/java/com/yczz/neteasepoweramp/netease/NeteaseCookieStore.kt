@@ -16,7 +16,9 @@ class NeteaseCookieStore(context: Context) {
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun saveMusicU(value: String) {
-        prefs.edit().putString(KEY_MUSIC_U, value.trim()).apply()
+        val musicU = parseMusicU(value)
+            ?: throw IllegalArgumentException("no MUSIC_U in pasted text")
+        prefs.edit().putString(KEY_MUSIC_U, musicU).apply()
     }
 
     /** @return the stored MUSIC_U value, or null when browsing anonymously. */
@@ -29,8 +31,32 @@ class NeteaseCookieStore(context: Context) {
     /** Ready-to-use Cookie header value for music.163.com requests, or null when anonymous. */
     fun cookieHeader(): String? = musicU()?.let { "$KEY_MUSIC_U=$it" }
 
-    private companion object {
+    companion object {
         const val PREFS_NAME = "netease_cookies"
         const val KEY_MUSIC_U = "MUSIC_U"
+
+        /**
+         * Accepts a raw MUSIC_U value, `MUSIC_U=...`, or a full Cookie header
+         * (`MUSIC_U=...; __csrf=...`). Returns just the MUSIC_U token.
+         */
+        fun parseMusicU(raw: String): String? {
+            val text = raw.trim().trim('"', '\'')
+            if (text.isEmpty()) return null
+            if (!text.contains('=') && !text.contains(';')) {
+                return text.takeIf { it.isNotEmpty() }
+            }
+            val parts = text.split(';')
+            for (part in parts) {
+                val pair = part.trim()
+                val eq = pair.indexOf('=')
+                if (eq <= 0) continue
+                val name = pair.substring(0, eq).trim()
+                val value = pair.substring(eq + 1).trim()
+                if (name.equals(KEY_MUSIC_U, ignoreCase = true) && value.isNotEmpty()) {
+                    return value
+                }
+            }
+            return null
+        }
     }
 }

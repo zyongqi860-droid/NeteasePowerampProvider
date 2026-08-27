@@ -72,7 +72,13 @@ internal object ProviderCursorBuilder {
      * duration<=0 the DURATION column is omitted so Poweramp reads the real duration from the
      * stream (metadata must match the audio, task section 11).
      */
-    fun fillSongRow(row: MatrixCursor.RowBuilder, documentId: String, song: SongEntity, servedSize: Long) {
+    fun fillSongRow(
+        row: MatrixCursor.RowBuilder,
+        documentId: String,
+        song: SongEntity,
+        servedSize: Long,
+        lyrics: String? = null,
+    ) {
         val displayName = buildString {
             append(song.title.ifEmpty { "song_${song.songId}" })
             append(".mp3")
@@ -82,7 +88,11 @@ internal object ProviderCursorBuilder {
         row.add(Document.COLUMN_DISPLAY_NAME, displayName)
         row.add(Document.COLUMN_LAST_MODIFIED, song.updatedAt)
         row.add(Document.COLUMN_SIZE, servedSize)
+        val hasLyrics = !lyrics.isNullOrBlank()
         row.add(Document.COLUMN_FLAGS, Document.FLAG_SUPPORTS_THUMBNAIL)
+        if (hasLyrics) {
+            row.add(TrackProviderConsts.COLUMN_FLAGS, TrackProviderConsts.FLAG_HAS_LYRICS)
+        }
         row.add(TrackProviderConsts.COLUMN_URL, TrackProviderConsts.DYNAMIC_URL)
 
         row.add(MediaStore.MediaColumns.TITLE, song.title)
@@ -91,6 +101,9 @@ internal object ProviderCursorBuilder {
         if (song.duration > 0L) {
             row.add(MediaStore.Audio.AudioColumns.DURATION, song.duration)
         }
-        // coverUrl feeds openDocumentThumbnail via AlbumArtService (phase 4).
+        if (hasLyrics) {
+            row.add(TrackProviderConsts.COLUMN_TRACK_LYRICS_SYNCED, lyrics)
+            row.add(TrackProviderConsts.COLUMN_TRACK_LYRICS, lyrics)
+        }
     }
 }

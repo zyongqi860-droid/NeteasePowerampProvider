@@ -14,8 +14,15 @@ interface LyricDao {
     @Query("SELECT content FROM lyrics WHERE song_id = :songId")
     suspend fun getLyrics(songId: Long): String?
 
+    /** Blocking read for the DocumentsProvider binder thread. */
+    @Query("SELECT content FROM lyrics WHERE song_id = :songId")
+    fun getLyricsBlocking(songId: Long): String?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveLyric(entity: LyricEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun saveLyricBlocking(entity: LyricEntity)
 
     @Query("DELETE FROM lyrics WHERE song_id = :songId")
     suspend fun deleteLyrics(songId: Long)

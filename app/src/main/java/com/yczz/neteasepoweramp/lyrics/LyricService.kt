@@ -66,6 +66,54 @@ class LyricService(context: Context) {
         }
     }
 
+    /** Cached raw LRC only; never hits the network. Empty string means a previous miss. */
+    fun cachedRawLyrics(songId: Long): String? =
+        AppDatabase.get(appContext).lyricDao().getLyricsBlocking(songId)
+
+    /**
+     * Prefetch lyrics in the background so the next Poweramp scan can serve them from cache.
+     * Safe to call from a binder thread; work runs on a daemon thread.
+     */
+    fun prefetch(songId: Long) {
+        Thread {
+            try {
+                if (cachedRawLyrics(songId) != null) return@Thread
+                val content = fetchLyricsFromNeteaseBlocking(songId)
+                AppDatabase.get(appContext).lyricDao().saveLyricBlocking(
+                    com.yczz.neteasepoweramp.database.LyricEntity(
+                        songId = songId,
+                        content = content,
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            } catch (e: Exception) {
+                Log.w(ProviderConstants.TAG, "lyrics prefetch failed for song $songId", e)
+            }
+        }.apply { isDaemon = true; name = "lyric-prefetch-$songId" }.start()
+    }
+
+    private fun fetchLyricsFromNeteaseBlocking(songId: Long): String {
+        val body = FormBody.Builder()
+            .add("id", songId.toString())
+            .add("lv", "-1")
+            .add("kv", "-1")
+            .add("tv", "-1")
+            .build()
+        val request = Request.Builder()
+            .url(LYRIC_API)
+            .header("User-Agent", USER_AGENT)
+            .header("Referer", REFERER)
+            .post(body)
+            .build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                Log.w(ProviderConstants.TAG, "lyrics HTTP ${response.code} for song $songId")
+                return ""
+            }
+            return parseLyricResponse(response.body?.string().orEmpty())
+        }
+    }
+
     /**
      * Clear cached lyrics for a song (e.g. on user request or cache invalidation).
      */
@@ -120,8 +168,11 @@ class LyricService(context: Context) {
             val code = root.optInt("code", -1)
             if (code != OK_CODE) return ""
             // "lrc" object contains the "lyric" field with raw LRC text.
-            val lrc = root.optJSONObject("lrc") ?: return ""
-            lrc.optString("lyric").orEmpty().trim()
+            val lrc = root.optJSONObject("lrc")?.optString("lyric").orEmpty().trim()
+            if (lrc.isNotEmpty() && lrc != "nolyric" && lrc != "纯音乐，请欣赏") return lrc
+            val tlyric = root.optJSONObject("tlyric")?.optString("lyric").orEmpty().trim()
+            if (tlyric.isNotEmpty()) return tlyric
+            ""
         } catch (e: Exception) {
             Log.w(ProviderConstants.TAG, "lyrics JSON parse failed", e)
             ""

@@ -1,6 +1,7 @@
 package com.yczz.neteasepoweramp.settings
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
@@ -38,6 +39,12 @@ class SettingsActivity : Activity() {
     @Volatile
     private var qrPollActive = false
 
+    /**
+     * Shared across "send captcha" and "login" so both carry the same MUSIC_A visitor
+     * session. A fresh client per click is what triggered NetEase code=10004.
+     */
+    private val loginClient = NeteaseClient()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
@@ -45,39 +52,67 @@ class SettingsActivity : Activity() {
         cookieStore = NeteaseCookieStore(this)
         val input = findViewById<EditText>(R.id.cookie_input)
         val status = findViewById<TextView>(R.id.cookie_status)
+        val loginStatus = findViewById<TextView>(R.id.login_status)
 
-        // ---- QR scan login (primary path; password login is blocked by code=8821) ----
-        val qrStatus = findViewById<TextView>(R.id.qr_status)
-        findViewById<Button>(R.id.btn_qr_login).setOnClickListener {
-            startQrLogin(qrStatus)
+        findViewById<Button>(R.id.btn_web_login).setOnClickListener {
+            startActivityForResult(Intent(this, WebLoginActivity::class.java), REQ_WEB_LOGIN)
         }
 
-        // ---- Phone login (recommended path; stores the same MUSIC_U cookie on success) ----
+        // ---- SMS captcha login (often risk-blocked; web login is the primary path) ----
         val phoneInput = findViewById<EditText>(R.id.login_phone)
-        val passwordInput = findViewById<EditText>(R.id.login_password)
-        findViewById<Button>(R.id.btn_login).setOnClickListener {
+        val captchaInput = findViewById<EditText>(R.id.login_captcha)
+        findViewById<Button>(R.id.btn_send_captcha).setOnClickListener {
             val phone = phoneInput.text.toString().trim()
-            val password = passwordInput.text.toString()
-            if (phone.isEmpty() || password.isEmpty()) {
-                Toast.makeText(this, R.string.login_empty_input, Toast.LENGTH_SHORT).show()
+            if (phone.isEmpty()) {
+                Toast.makeText(this, R.string.login_empty_phone, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            status.text = getString(R.string.login_in_progress)
+            loginStatus.text = getString(R.string.login_sending_captcha)
             Thread {
                 val result = try {
-                    val login = NeteaseClient().loginCellphone(phone, DEFAULT_COUNTRY_CODE, password)
+                    loginClient.sendCaptcha(phone, DEFAULT_COUNTRY_CODE)
+                    getString(R.string.login_captcha_sent)
+                } catch (e: Exception) {
+                    Log.e(ProviderConstants.TAG, "send captcha failed", e)
+                    getString(R.string.login_failed, e.message)
+                }
+                mainHandler.post { loginStatus.text = result }
+            }.apply { isDaemon = true; name = "netease-captcha" }.start()
+        }
+        findViewById<Button>(R.id.btn_login).setOnClickListener {
+            val phone = phoneInput.text.toString().trim()
+            val captcha = captchaInput.text.toString().trim()
+            if (phone.isEmpty()) {
+                Toast.makeText(this, R.string.login_empty_phone, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (captcha.isEmpty()) {
+                Toast.makeText(this, R.string.login_empty_captcha, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            loginStatus.text = getString(R.string.login_in_progress)
+            Thread {
+                val result = try {
+                    val login = loginClient.loginCellphoneCaptcha(phone, DEFAULT_COUNTRY_CODE, captcha)
                     cookieStore.saveMusicU(login.musicU)
                     clearPlaybackUrlCache()
                     getString(R.string.login_success, login.account.nickname, vipLabel(login.account.vipType))
                 } catch (e: Exception) {
-                    Log.e(ProviderConstants.TAG, "phone login failed", e)
+                    Log.e(ProviderConstants.TAG, "sms login failed", e)
                     getString(R.string.login_failed, e.message)
                 }
                 mainHandler.post {
-                    passwordInput.setText("")
+                    captchaInput.setText("")
+                    loginStatus.text = result
                     status.text = result
                 }
             }.apply { isDaemon = true; name = "netease-login" }.start()
+        }
+
+        // ---- QR scan login (fallback) ----
+        val qrStatus = findViewById<TextView>(R.id.qr_status)
+        findViewById<Button>(R.id.btn_qr_login).setOnClickListener {
+            startQrLogin(qrStatus)
         }
 
         findViewById<Button>(R.id.btn_save_cookie).setOnClickListener {
@@ -86,11 +121,17 @@ class SettingsActivity : Activity() {
                 Toast.makeText(this, R.string.cookie_empty_input, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            cookieStore.saveMusicU(value)
+            try {
+                cookieStore.saveMusicU(value)
+            } catch (e: IllegalArgumentException) {
+                Toast.makeText(this, R.string.cookie_empty_input, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             input.setText("")
             clearPlaybackUrlCache()
             status.text = getString(R.string.cookie_status_saved)
             Log.i(ProviderConstants.TAG, "netease cookie saved (value not logged)")
+            verifyStoredCookie(status)
         }
 
         findViewById<Button>(R.id.btn_verify_cookie).setOnClickListener {
@@ -119,6 +160,40 @@ class SettingsActivity : Activity() {
             status.text = getString(R.string.cookie_status_anonymous)
             Log.i(ProviderConstants.TAG, "netease cookie cleared")
         }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_WEB_LOGIN) return
+        val status = findViewById<TextView>(R.id.cookie_status)
+        val musicU = data?.getStringExtra(WebLoginActivity.EXTRA_MUSIC_U)
+        if (resultCode != RESULT_OK || musicU.isNullOrEmpty()) {
+            status.text = getString(R.string.web_login_cancelled)
+            return
+        }
+        cookieStore.saveMusicU(musicU)
+        clearPlaybackUrlCache()
+        verifyStoredCookie(status)
+    }
+
+    private fun verifyStoredCookie(status: TextView) {
+        val musicU = cookieStore.musicU()
+            ?: run {
+                status.text = getString(R.string.cookie_status_anonymous)
+                return
+            }
+        status.text = getString(R.string.cookie_status_verifying)
+        Thread {
+            val result = try {
+                val account = NeteaseClient().verifyAccount(musicU)
+                getString(R.string.cookie_status_ok, account.nickname, vipLabel(account.vipType))
+            } catch (e: Exception) {
+                Log.e(ProviderConstants.TAG, "cookie verify failed", e)
+                getString(R.string.cookie_status_invalid, e.message)
+            }
+            mainHandler.post { status.text = result }
+        }.apply { isDaemon = true; name = "cookie-verify" }.start()
     }
 
     /**
@@ -276,6 +351,8 @@ class SettingsActivity : Activity() {
     }
 
     private companion object {
+        const val REQ_WEB_LOGIN = 1001
+
         /** CN mobile numbers; the only market this app realistically targets. */
         const val DEFAULT_COUNTRY_CODE = "86"
 

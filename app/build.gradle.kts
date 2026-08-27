@@ -12,8 +12,8 @@ android {
         applicationId = "com.yczz.neteasepoweramp"
         minSdk = 21
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.7.0-phase5"
+        versionCode = 16
+        versionName = "0.9.4-pa-theme"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

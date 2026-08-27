@@ -14,11 +14,22 @@
 	<string name="feature_todo_playlists">¨ 网易云歌单</string>
 	<string name="feature_todo_lyrics">¨ 网易云歌词</string>
 
-	<string name="search_header">网易云歌曲搜索(第二阶段:仅展示,点击结果保存)</string>
+	<string name="search_header">搜索结果 · 点选保存</string>
 	<string name="search_hint">输入关键词,如:周杰伦</string>
 	<string name="btn_search">搜索</string>
 	<string name="search_save_hint">点击搜索结果行保存到 Provider(Poweramp 刷新后可见)</string>
 	<string name="search_saved">已保存到 Provider:%1$s - %2$s</string>
+	<string name="library_header">曲库 · %1$d 首</string>
+	<string name="library_hint">点选歌曲后点"删除所选";可点"全选"</string>
+	<string name="library_empty">还没有保存的歌曲</string>
+	<string name="library_deleted">已删除 %1$d 首</string>
+	<string name="library_delete_confirm_title">删除歌曲</string>
+	<string name="library_delete_confirm_message">从 Provider 中移除选中的 %1$d 首? Poweramp 下次扫描后将不再显示。</string>
+	<string name="library_delete_confirm">删除</string>
+	<string name="library_delete_cancel">取消</string>
+	<string name="library_select_all">全选</string>
+	<string name="library_delete_selected">删除所选</string>
+	<string name="library_none_selected">请先点选要删除的歌曲</string>
 	<string name="search_empty">无搜索结果</string>
 	<string name="search_failed">搜索失败:%1$s</string>
 
@@ -30,9 +41,9 @@
 	<string name="playlist_id_invalid">请输入有效的歌单数字 ID</string>
 	<string name="sync_done">已通知 Poweramp 重新扫描</string>
 
-	<string name="btn_check_provider">检查 Provider 配置</string>
-	<string name="btn_open_pa_music_folders">打开 Poweramp 音乐文件夹设置</string>
-	<string name="btn_open_settings">打开设置页</string>
+	<string name="btn_check_provider">检查配置</string>
+	<string name="btn_open_pa_music_folders">音乐文件夹</string>
+	<string name="btn_open_settings">设置</string>
 	<string name="main_status_idle">点击"检查 Provider 配置"验证 Provider 状态。</string>
 
 	<string name="check_authority_line">Provider Authority:%1$s</string>
@@ -51,8 +62,8 @@
 	<string name="poweramp_detected">Poweramp detected(%1$s)</string>
     <string name="poweramp_not_detected">未检测到 Poweramp</string>
 
-	<string name="qr_section_title">扫码登录(推荐)</string>
-	<string name="qr_help">点"生成二维码"后,用手机上的网易云音乐 App 扫码(首页右上角 ⌕ 搜索旁的 + / 扫一扫)并在手机上确认,自动完成登录。手机号密码登录已被网易云风控拦截(code=8821),扫码不受影响。</string>
+	<string name="qr_section_title">扫码登录(备用)</string>
+	<string name="qr_help">短信登录失败时再用。点"生成二维码"后,用网易云音乐 App 扫一扫并在手机上确认。</string>
 	<string name="qr_button">生成二维码</string>
 	<string name="qr_status_idle">尚未生成二维码</string>
 	<string name="qr_status_generating">正在生成二维码…</string>
@@ -62,19 +73,33 @@
 	<string name="qr_status_expired">二维码已过期,请重新生成</string>
 	<string name="qr_status_failed">扫码登录失败:%1$s</string>
 
-	<string name="login_section_title">手机号登录(常被风控拦截)</string>
-	<string name="login_help">用网易云手机号+密码登录,登录后 VIP 歌曲可播整首。密码只用于本次登录(加密传输),不会保存。</string>
+	<string name="web_login_section_title">网页登录(推荐)</string>
+	<string name="web_login_help">打开网易云官方登录页,用扫码/短信/第三方登录。成功后自动保存 Cookie,无需复制。短信接口已被风控(code=10004),请用这一条。</string>
+	<string name="web_login_button">打开网易云登录页</string>
+	<string name="web_login_status_loading">请在下方页面登录网易云账号(扫码更稳)…</string>
+	<string name="web_login_status_success">已捕获登录 Cookie,正在返回…</string>
+	<string name="web_login_cancelled">未捕获到登录 Cookie,请登录完成后再试,或改用下方粘贴</string>
+	<string name="web_login_title">网易云登录</string>
+
+	<string name="login_section_title">短信验证码登录(常被风控)</string>
+	<string name="login_help">输入绑定网易云的手机号,点"获取验证码",收到短信后填入验证码再点登录。必须用同一次发出的验证码登录,不要中途重开设置页。登录后 VIP 歌曲可播整首。验证码只用于本次登录,不会保存。</string>
 	<string name="login_phone_hint">手机号</string>
-	<string name="login_password_hint">密码</string>
+	<string name="login_captcha_hint">短信验证码</string>
+	<string name="login_send_captcha">获取验证码</string>
 	<string name="login_button">登录</string>
-	<string name="login_empty_input">请输入手机号和密码</string>
+	<string name="login_empty_phone">请输入手机号</string>
+	<string name="login_empty_captcha">请输入短信验证码</string>
+	<string name="login_status_idle">尚未登录</string>
+	<string name="login_sending_captcha">正在发送验证码…</string>
+	<string name="login_captcha_sent">验证码已发送,请查收短信</string>
 	<string name="login_in_progress">登录中…</string>
 	<string name="login_success">登录成功:%1$s(%2$s),已启用 VIP 整首播放</string>
 	<string name="login_failed">登录失败:%1$s</string>
+	<string name="login_risk_hint">若提示登录状态存在风险(code=10004),请重新点"获取验证码"后再登录;仍失败则用下方扫码或粘贴 Cookie。</string>
 
-	<string name="cookie_section_title">高级:手动粘贴 Cookie</string>
-	<string name="cookie_help">无法用手机号登录时(如触发风控),用浏览器登录 music.163.com 后,在开发者工具(F12)→应用→Cookie 中复制 MUSIC_U 的值粘贴到这里。</string>
-	<string name="cookie_input_hint">粘贴 MUSIC_U 值(一长串字母数字)</string>
+	<string name="cookie_section_title">电脑浏览器粘贴 Cookie</string>
+	<string name="cookie_help">电脑浏览器打开 music.163.com 并登录 → F12 → 应用/Application → Cookie → music.163.com → 复制 MUSIC_U 的值(或整行 Cookie)。粘贴到这里保存,再点验证,应显示昵称和 VIP。</string>
+	<string name="cookie_input_hint">粘贴 MUSIC_U 值,或整段 Cookie(含 MUSIC_U=...)</string>
 	<string name="cookie_save">保存</string>
 	<string name="cookie_verify">验证</string>
 	<string name="cookie_clear">清除</string>

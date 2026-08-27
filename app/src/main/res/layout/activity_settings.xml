@@ -2,6 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
 	android:layout_width="match_parent"
 	android:layout_height="match_parent"
+	android:background="@color/pa_bg"
 	android:fillViewport="true">
 
 	<LinearLayout
@@ -13,178 +14,291 @@
 		<TextView
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
-			android:text="@string/settings_authority_label" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:textIsSelectable="true"
-			android:textStyle="bold"
-			android:text="@string/settings_authority_value" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="12dp"
-			android:text="@string/settings_status_label" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="12dp"
-			android:text="@string/settings_track_label" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:text="@string/settings_album_label" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="24dp"
-			android:textStyle="bold"
-			android:text="@string/qr_section_title" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:text="@string/qr_help" />
-
-		<Button
-			android:id="@+id/btn_qr_login"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:text="@string/qr_button" />
-
-		<ImageView
-			android:id="@+id/qr_code"
-			android:layout_width="240dp"
-			android:layout_height="240dp"
-			android:layout_gravity="center_horizontal"
-			android:layout_marginTop="8dp"
-			android:contentDescription="@string/qr_section_title"
-			android:scaleType="fitCenter" />
-
-		<TextView
-			android:id="@+id/qr_status"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:gravity="center_horizontal"
-			android:text="@string/qr_status_idle" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="24dp"
-			android:textStyle="bold"
-			android:text="@string/login_section_title" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:text="@string/login_help" />
-
-		<EditText
-			android:id="@+id/login_phone"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="8dp"
-			android:singleLine="true"
-			android:inputType="phone"
-			android:hint="@string/login_phone_hint"
-			android:imeOptions="actionNext" />
-
-		<EditText
-			android:id="@+id/login_password"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:singleLine="true"
-			android:inputType="textPassword"
-			android:hint="@string/login_password_hint"
-			android:imeOptions="actionDone" />
-
-		<Button
-			android:id="@+id/btn_login"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:text="@string/login_button" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="24dp"
-			android:textStyle="bold"
-			android:text="@string/cookie_section_title" />
-
-		<TextView
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:text="@string/cookie_help" />
-
-		<EditText
-			android:id="@+id/cookie_input"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="8dp"
-			android:singleLine="true"
-			android:hint="@string/cookie_input_hint"
-			android:imeOptions="actionDone"
-			android:fontFamily="monospace"
-			android:textSize="12sp" />
+			android:text="@string/settings_title"
+			style="@style/PaTitle" />
 
 		<LinearLayout
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:orientation="horizontal">
+			android:layout_marginTop="16dp"
+			android:background="@drawable/bg_card"
+			android:orientation="vertical"
+			android:padding="14dp">
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:text="@string/web_login_section_title"
+				style="@style/PaSection" />
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="6dp"
+				android:text="@string/web_login_help"
+				style="@style/PaHint" />
 
 			<Button
-				android:id="@+id/btn_save_cookie"
-				android:layout_width="0dp"
+				android:id="@+id/btn_web_login"
+				android:layout_width="match_parent"
 				android:layout_height="wrap_content"
-				android:layout_weight="1"
-				android:text="@string/cookie_save" />
-
-			<Button
-				android:id="@+id/btn_verify_cookie"
-				android:layout_width="0dp"
-				android:layout_height="wrap_content"
-				android:layout_weight="1"
-				android:text="@string/cookie_verify" />
-
-			<Button
-				android:id="@+id/btn_clear_cookie"
-				android:layout_width="0dp"
-				android:layout_height="wrap_content"
-				android:layout_weight="1"
-				android:text="@string/cookie_clear" />
+				android:layout_marginTop="10dp"
+				android:text="@string/web_login_button"
+				style="@style/PaButton.Primary" />
 		</LinearLayout>
 
-		<TextView
-			android:id="@+id/cookie_status"
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="4dp"
-			android:text="@string/cookie_status_anonymous" />
-
-		<TextView
+		<LinearLayout
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
 			android:layout_marginTop="12dp"
-			android:text="@string/settings_poweramp_label" />
+			android:background="@drawable/bg_card"
+			android:orientation="vertical"
+			android:padding="14dp">
 
-		<TextView
-			android:id="@+id/poweramp_status"
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:text="@string/login_section_title"
+				style="@style/PaSection" />
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="6dp"
+				android:text="@string/login_help"
+				style="@style/PaHint" />
+
+			<EditText
+				android:id="@+id/login_phone"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="10dp"
+				android:singleLine="true"
+				android:inputType="phone"
+				android:hint="@string/login_phone_hint"
+				android:imeOptions="actionNext"
+				style="@style/PaInput" />
+
+			<LinearLayout
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="8dp"
+				android:orientation="horizontal">
+
+				<EditText
+					android:id="@+id/login_captcha"
+					android:layout_width="0dp"
+					android:layout_height="wrap_content"
+					android:layout_weight="1"
+					android:singleLine="true"
+					android:inputType="number"
+					android:hint="@string/login_captcha_hint"
+					android:imeOptions="actionDone"
+					style="@style/PaInput" />
+
+				<Button
+					android:id="@+id/btn_send_captcha"
+					android:layout_width="wrap_content"
+					android:layout_height="wrap_content"
+					android:layout_marginStart="8dp"
+					android:text="@string/login_send_captcha"
+					style="@style/PaButton.Secondary" />
+			</LinearLayout>
+
+			<Button
+				android:id="@+id/btn_login"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="8dp"
+				android:text="@string/login_button"
+				style="@style/PaButton.Secondary" />
+
+			<TextView
+				android:id="@+id/login_status"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="8dp"
+				android:text="@string/login_status_idle"
+				style="@style/PaStatus" />
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="4dp"
+				android:text="@string/login_risk_hint"
+				style="@style/PaHint" />
+		</LinearLayout>
+
+		<LinearLayout
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
-			android:text="@string/poweramp_not_detected" />
+			android:layout_marginTop="12dp"
+			android:background="@drawable/bg_card"
+			android:orientation="vertical"
+			android:padding="14dp">
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:text="@string/qr_section_title"
+				style="@style/PaSection" />
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="6dp"
+				android:text="@string/qr_help"
+				style="@style/PaHint" />
+
+			<Button
+				android:id="@+id/btn_qr_login"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="10dp"
+				android:text="@string/qr_button"
+				style="@style/PaButton.Secondary" />
+
+			<ImageView
+				android:id="@+id/qr_code"
+				android:layout_width="220dp"
+				android:layout_height="220dp"
+				android:layout_gravity="center_horizontal"
+				android:layout_marginTop="12dp"
+				android:background="@color/pa_text"
+				android:contentDescription="@string/qr_section_title"
+				android:padding="8dp"
+				android:scaleType="fitCenter" />
+
+			<TextView
+				android:id="@+id/qr_status"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="8dp"
+				android:gravity="center_horizontal"
+				android:text="@string/qr_status_idle"
+				style="@style/PaStatus" />
+		</LinearLayout>
+
+		<LinearLayout
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="12dp"
+			android:background="@drawable/bg_card"
+			android:orientation="vertical"
+			android:padding="14dp">
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:text="@string/cookie_section_title"
+				style="@style/PaSection" />
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="6dp"
+				android:text="@string/cookie_help"
+				style="@style/PaHint" />
+
+			<EditText
+				android:id="@+id/cookie_input"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="10dp"
+				android:minLines="3"
+				android:gravity="top"
+				android:inputType="textMultiLine"
+				android:hint="@string/cookie_input_hint"
+				android:fontFamily="monospace"
+				android:textSize="12sp"
+				style="@style/PaInput" />
+
+			<LinearLayout
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="8dp"
+				android:orientation="horizontal">
+
+				<Button
+					android:id="@+id/btn_save_cookie"
+					android:layout_width="0dp"
+					android:layout_height="wrap_content"
+					android:layout_weight="1"
+					android:text="@string/cookie_save"
+					style="@style/PaButton.Primary" />
+
+				<Button
+					android:id="@+id/btn_verify_cookie"
+					android:layout_width="0dp"
+					android:layout_height="wrap_content"
+					android:layout_marginStart="6dp"
+					android:layout_weight="1"
+					android:text="@string/cookie_verify"
+					style="@style/PaButton.Secondary" />
+
+				<Button
+					android:id="@+id/btn_clear_cookie"
+					android:layout_width="0dp"
+					android:layout_height="wrap_content"
+					android:layout_marginStart="6dp"
+					android:layout_weight="1"
+					android:text="@string/cookie_clear"
+					style="@style/PaButton.Danger" />
+			</LinearLayout>
+
+			<TextView
+				android:id="@+id/cookie_status"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="8dp"
+				android:text="@string/cookie_status_anonymous"
+				style="@style/PaStatus" />
+		</LinearLayout>
+
+		<LinearLayout
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="12dp"
+			android:background="@drawable/bg_card"
+			android:orientation="vertical"
+			android:padding="14dp">
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:text="@string/settings_authority_label"
+				style="@style/PaSection" />
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="6dp"
+				android:textIsSelectable="true"
+				android:text="@string/settings_authority_value"
+				android:textColor="@color/pa_text"
+				android:textStyle="bold" />
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="8dp"
+				android:text="@string/settings_status_label"
+				style="@style/PaHint" />
+
+			<TextView
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="4dp"
+				android:text="@string/settings_poweramp_label"
+				style="@style/PaHint" />
+
+			<TextView
+				android:id="@+id/poweramp_status"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="2dp"
+				android:text="@string/poweramp_not_detected"
+				style="@style/PaStatus" />
+		</LinearLayout>
 	</LinearLayout>
 </ScrollView>

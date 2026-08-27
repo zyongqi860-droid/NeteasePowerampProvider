@@ -1,6 +1,7 @@
 package com.yczz.neteasepoweramp
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
@@ -11,6 +12,7 @@ import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ListView
 import android.widget.TextView
@@ -40,6 +42,7 @@ class MainActivity : Activity() {
     private lateinit var searchService: SearchService
     private lateinit var playlistService: PlaylistService
     private lateinit var resultAdapter: SongAdapter
+    private lateinit var libraryAdapter: SongAdapter
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,13 +66,23 @@ class MainActivity : Activity() {
         playlistService = PlaylistService(this)
 
         // Search results list.
-        resultAdapter = SongAdapter()
+        resultAdapter = SongAdapter(checkable = false)
         val resultsList = findViewById<ListView>(R.id.search_results)
         resultsList.adapter = resultAdapter
         resultsList.setOnItemClickListener { _, _, position, _ ->
             val song = resultAdapter.getItem(position) ?: return@setOnItemClickListener
             saveSong(song)
         }
+
+        libraryAdapter = SongAdapter(checkable = true)
+        val libraryList = findViewById<ListView>(R.id.saved_songs)
+        libraryList.adapter = libraryAdapter
+        libraryList.setOnItemClickListener { _, _, position, _ ->
+            libraryAdapter.toggle(position)
+        }
+        findViewById<View>(R.id.btn_select_all).setOnClickListener { libraryAdapter.toggleAll() }
+        findViewById<View>(R.id.btn_delete_selected).setOnClickListener { confirmDeleteSelected() }
+        refreshLibrary()
     }
 
     override fun onDestroy() {
@@ -116,7 +129,45 @@ class MainActivity : Activity() {
         searchService.saveSongs(listOf(song))
         Toast.makeText(this, getString(R.string.search_saved, song.title, song.artist), Toast.LENGTH_SHORT).show()
         // Auto-rescan so the song shows up in Poweramp without a manual sync (saveSongs is async).
-        mainHandler.postDelayed({ triggerPowerampRescan(showToast = false) }, RESCAN_DELAY_MS)
+        mainHandler.postDelayed({
+            refreshLibrary()
+            triggerPowerampRescan(showToast = false)
+        }, RESCAN_DELAY_MS)
+    }
+
+    private fun confirmDeleteSelected() {
+        val ids = libraryAdapter.selectedIds()
+        if (ids.isEmpty()) {
+            Toast.makeText(this, R.string.library_none_selected, Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.library_delete_confirm_title)
+            .setMessage(getString(R.string.library_delete_confirm_message, ids.size))
+            .setPositiveButton(R.string.library_delete_confirm) { _, _ -> deleteSongs(ids) }
+            .setNegativeButton(R.string.library_delete_cancel, null)
+            .show()
+    }
+
+    private fun deleteSongs(songIds: List<Long>) {
+        searchService.deleteSongs(songIds) {
+            mainHandler.post {
+                Toast.makeText(this, getString(R.string.library_deleted, songIds.size), Toast.LENGTH_SHORT).show()
+                libraryAdapter.clearSelection()
+                refreshLibrary()
+                triggerPowerampRescan(showToast = false)
+            }
+        }
+    }
+
+    private fun refreshLibrary() {
+        searchService.listSavedSongs { songs ->
+            mainHandler.post {
+                libraryAdapter.replace(songs)
+                findViewById<TextView>(R.id.library_header).text =
+                    getString(R.string.library_header, songs.size)
+            }
+        }
     }
 
     // ==================== Playlist Import ====================
@@ -261,15 +312,37 @@ class MainActivity : Activity() {
 
     // ==================== Song Adapter ====================
 
-    /** Two-line rows: title + artist/album/duration. */
-    private inner class SongAdapter : BaseAdapter() {
+    /** Two-line rows: title + artist/album/duration. Optional checkboxes for the library list. */
+    private inner class SongAdapter(private val checkable: Boolean) : BaseAdapter() {
         private val songs = ArrayList<Song>()
+        private val selected = HashSet<Long>()
 
         fun replace(newSongs: List<Song>) {
             songs.clear()
             songs.addAll(newSongs)
+            selected.retainAll(newSongs.map { it.songId }.toSet())
             notifyDataSetChanged()
         }
+
+        fun toggle(position: Int) {
+            if (!checkable) return
+            val id = songs[position].songId
+            if (!selected.add(id)) selected.remove(id)
+            notifyDataSetChanged()
+        }
+
+        fun toggleAll() {
+            if (!checkable || songs.isEmpty()) return
+            if (selected.size == songs.size) selected.clear() else songs.forEach { selected.add(it.songId) }
+            notifyDataSetChanged()
+        }
+
+        fun clearSelection() {
+            selected.clear()
+            notifyDataSetChanged()
+        }
+
+        fun selectedIds(): List<Long> = selected.toList()
 
         override fun getCount(): Int = songs.size
 
@@ -278,12 +351,16 @@ class MainActivity : Activity() {
         override fun getItemId(position: Int): Long = songs[position].songId
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val view = convertView ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
             val song = songs[position]
-            view.findViewById<TextView>(android.R.id.text1).text = song.title
             val durationSec = song.durationMs / 1000L
-            view.findViewById<TextView>(android.R.id.text2).text =
-                "${song.artist} - ${song.album} (${durationSec / 60}:${"%02d".format(durationSec % 60)})"
+            val subtitle = "${song.artist} · ${song.album}  ${durationSec / 60}:${"%02d".format(durationSec % 60)}"
+            val layout = if (checkable) R.layout.item_saved_song else R.layout.item_search_song
+            val view = convertView ?: layoutInflater.inflate(layout, parent, false)
+            view.findViewById<TextView>(R.id.song_title).text = song.title
+            view.findViewById<TextView>(R.id.song_subtitle).text = subtitle
+            if (checkable) {
+                view.findViewById<CheckBox>(R.id.song_check).isChecked = selected.contains(song.songId)
+            }
             return view
         }
     }

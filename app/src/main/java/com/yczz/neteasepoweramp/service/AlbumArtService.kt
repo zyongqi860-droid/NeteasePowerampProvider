@@ -70,6 +70,8 @@ class AlbumArtService(context: Context) {
     private fun download(coverUrl: String, target: File) {
         val request = Request.Builder()
             .url(sizedUrl(coverUrl))
+            .header("User-Agent", USER_AGENT)
+            .header("Referer", REFERER)
             .build()
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("cover HTTP ${response.code}")
@@ -82,8 +84,10 @@ class AlbumArtService(context: Context) {
     }
 
     /** Appends the NetEase CDN resize hint unless the URL already carries a query string. */
-    private fun sizedUrl(coverUrl: String): String =
-        if (coverUrl.contains('?')) coverUrl else "$coverUrl?param=$COVER_SIZE"
+    private fun sizedUrl(coverUrl: String): String {
+        val https = if (coverUrl.startsWith("http://")) "https://" + coverUrl.removePrefix("http://") else coverUrl
+        return if (https.contains('?')) https else "$https?param=$COVER_SIZE"
+    }
 
     private companion object {
         const val TAG = ProviderConstants.TAG
@@ -92,5 +96,7 @@ class AlbumArtService(context: Context) {
         const val COVER_SIZE = "350y350"
         const val CONNECT_TIMEOUT_SECONDS = 10L
         const val READ_TIMEOUT_SECONDS = 15L
+        const val USER_AGENT = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36"
+        const val REFERER = "https://music.163.com/"
     }
 }

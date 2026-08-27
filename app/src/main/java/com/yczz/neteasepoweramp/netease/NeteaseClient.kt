@@ -30,6 +30,14 @@ class NeteaseClient(
             .build()
 
     /**
+     * Anonymous visitor cookie (MUSIC_A) for the current SMS-login attempt.
+     * Send-captcha and login must share this: NetEase treats a login without the
+     * matching visitor session as a risky new device (code 10004).
+     */
+    @Volatile
+    private var visitorCookie: String? = null
+
+    /**
      * Runs a synchronous search; blocking IO, so callers must invoke from a background thread.
      *
      * @return songs in API order (relevance), possibly empty.
@@ -105,61 +113,114 @@ class NeteaseClient(
     data class LoginResult(val musicU: String, val account: AccountStatus)
 
     /**
-     * Logs in with phone number + password via the encrypted weapi endpoint and returns the
-     * fresh MUSIC_U cookie. Blocking IO; call from a background thread.
+     * Registers an anonymous visitor and keeps MUSIC_A on this client instance.
+     * Required before SMS login; otherwise NetEase answers code=10004 (risky login).
+     */
+    @Throws(IOException::class, NeteaseApiException::class)
+    fun ensureVisitor(): String {
+        visitorCookie?.let { return it }
+        val username = anonymousUsername()
+        val result = eapiPost(
+            "/api/register/anonimous",
+            JSONObject().put("username", username),
+        )
+        val root = JSONObject(result.body)
+        val code = root.optInt("code", -1)
+        if (code != OK_CODE) {
+            throw NeteaseApiException(apiError("anonymous register", code, root))
+        }
+        val musicA = extractCookie(result.cookies, "MUSIC_A")
+            ?: throw NeteaseApiException("anonymous register ok but no MUSIC_A cookie")
+        val csrf = extractCookie(result.cookies, "__csrf")
+        visitorCookie = buildString {
+            append("MUSIC_A=").append(musicA)
+            if (!csrf.isNullOrEmpty()) append("; __csrf=").append(csrf)
+        }
+        return visitorCookie!!
+    }
+
+    /**
+     * Sends a login SMS captcha to [phone]. Blocking IO; call from a background thread.
      *
-     * The password is hashed (md5) before it leaves this method and is never stored or logged.
-     *
-     * @throws IOException on network failure.
-     * @throws NeteaseApiException on wrong credentials (code 502), risk control (code 405/406),
-     * or any other non-200 answer.
+     * Must go through eapi on interface.music.163.com: the weapi POST path is stripped
+     * by CDN (HTTP 200, empty body), and the unencrypted /api path answers code=405.
+     * Call [ensureVisitor] first so send+login share the same MUSIC_A session.
+     */
+    @Throws(IOException::class, NeteaseApiException::class)
+    fun sendCaptcha(phone: String, countrycode: String) {
+        ensureVisitor()
+        val result = eapiPost(
+            "/api/sms/captcha/sent",
+            JSONObject()
+                .put("ctcode", countrycode)
+                .put("cellphone", phone),
+        )
+        val root = JSONObject(result.body)
+        val code = root.optInt("code", -1)
+        if (code != OK_CODE) {
+            throw NeteaseApiException(apiError("send captcha", code, root))
+        }
+    }
+
+    /**
+     * Logs in with phone + SMS captcha via eapi and returns the MUSIC_U cookie.
+     * Blocking IO; call from a background thread. The captcha is never stored or logged.
+     * Must use the same [NeteaseClient] instance that sent the captcha.
+     */
+    @Throws(IOException::class, NeteaseApiException::class)
+    fun loginCellphoneCaptcha(phone: String, countrycode: String, captcha: String): LoginResult {
+        ensureVisitor()
+        val result = eapiPost(
+            "/api/w/login/cellphone",
+            JSONObject()
+                .put("type", "1")
+                .put("https", "true")
+                .put("phone", phone)
+                .put("countrycode", countrycode)
+                .put("captcha", captcha)
+                .put("remember", "true"),
+        )
+        return parseLoginResult(result, "sms login")
+    }
+
+    /**
+     * Logs in with phone + password via eapi. Password is md5'd before leaving this method
+     * and is never stored or logged. Often blocked by risk control (code 8821 / -460);
+     * SMS login is the primary path.
      */
     @Throws(IOException::class, NeteaseApiException::class)
     fun loginCellphone(phone: String, countrycode: String, password: String): LoginResult {
-        val payload = org.json.JSONObject()
-            .put("phone", phone)
-            .put("countrycode", countrycode)
-            .put("password", md5Hex(password))
-            .put("rememberLogin", "true")
-            .toString()
-        val encrypted = WeapiCrypto.encrypt(payload)
+        val result = eapiPost(
+            "/api/w/login/cellphone",
+            JSONObject()
+                .put("type", "1")
+                .put("https", "true")
+                .put("phone", phone)
+                .put("countrycode", countrycode)
+                .put("password", md5Hex(password))
+                .put("remember", "true"),
+        )
+        return parseLoginResult(result, "password login")
+    }
 
-        val body = FormBody.Builder()
-            .add("params", encrypted.params)
-            .add("encSecKey", encrypted.encSecKey)
-            .build()
-        val request = Request.Builder()
-            .url("$WEAPI_BASE/login/cellphone")
-            .header("User-Agent", USER_AGENT)
-            .header("Referer", REFERER)
-            .post(body)
-            .build()
-
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("login HTTP ${response.code}")
-            val payloadText = response.body?.string() ?: throw IOException("empty login body")
-            val root = JSONObject(payloadText)
-            val code = root.optInt("code", -1)
-            if (code != OK_CODE) {
-                val msg = root.optString("message").ifEmpty { root.optString("msg") }
-                throw NeteaseApiException("login failed (code=$code ${msg.ifEmpty { "no message" }})")
-            }
-            // The credential is a Set-Cookie header on the login response itself.
-            val musicU = response.headers.values("Set-Cookie")
-                .firstNotNullOfOrNull { cookie ->
-                    cookie.substringAfter("MUSIC_U=", "").substringBefore(';').takeIf { it.isNotEmpty() }
-                }
-                ?: throw NeteaseApiException("login ok but no MUSIC_U cookie in response")
-            val profile = root.optJSONObject("profile")
-                ?: throw NeteaseApiException("login ok but no profile")
-            return LoginResult(
-                musicU = musicU,
-                account = AccountStatus(
-                    nickname = profile.optString("nickname").orEmpty(),
-                    vipType = profile.optInt("vipType", 0),
-                ),
-            )
+    private fun parseLoginResult(result: EncryptedResponse, what: String): LoginResult {
+        val root = JSONObject(result.body)
+        val code = root.optInt("code", -1)
+        if (code != OK_CODE) {
+            throw NeteaseApiException(apiError(what, code, root))
         }
+        val musicU = extractMusicU(result.cookies)
+            ?: extractMusicUFromBody(root)
+            ?: throw NeteaseApiException("$what ok but no MUSIC_U cookie")
+        val profile = root.optJSONObject("profile")
+            ?: throw NeteaseApiException("$what ok but no profile")
+        return LoginResult(
+            musicU = musicU,
+            account = AccountStatus(
+                nickname = profile.optString("nickname").orEmpty(),
+                vipType = profile.optInt("vipType", 0),
+            ),
+        )
     }
 
     private fun md5Hex(text: String): String {
@@ -169,8 +230,8 @@ class NeteaseClient(
     }
 
     // ---------------------------------------------------------------- QR login
-    // Phone+password login is blocked by NetEase risk control (code=8821 "请切换其他登录方式"),
-    // even with correct credentials. QR scan login is the officially supported web flow.
+    // Password login is often blocked (code=8821 / -460). QR is the web-supported fallback.
+    // Unikey + poll use the unencrypted GET /api path: weapi POST is CDN-stripped.
 
     /** Fresh key for the QR login flow; the QR content is a login URL carrying this key. */
     data class QrKey(val unikey: String)
@@ -188,7 +249,7 @@ class NeteaseClient(
     /** Step 1: request a fresh unikey for QR login. Blocking IO. */
     @Throws(IOException::class, NeteaseApiException::class)
     fun createQrKey(): QrKey {
-        val result = weapiPost("$WEAPI_BASE/login/qrcode/unikey", mapOf("type" to "1"))
+        val result = apiGet("$API_BASE/login/qrcode/unikey?type=$QR_TYPE")
         val root = JSONObject(result.body)
         if (root.optInt("code", -1) != OK_CODE) {
             throw NeteaseApiException("qrcode unikey failed (code=${root.optInt("code", -1)})")
@@ -205,49 +266,114 @@ class NeteaseClient(
      */
     @Throws(IOException::class, NeteaseApiException::class)
     fun pollQrLogin(key: QrKey): QrPollResult {
-        val result = weapiPost("$WEAPI_BASE/login/qrcode/client/login", mapOf("key" to key.unikey, "type" to "1"))
+        val result = apiGet("$API_BASE/login/qrcode/client/login?key=${key.unikey}&type=$QR_TYPE")
         val root = JSONObject(result.body)
         val code = root.optInt("code", -1)
         val message = root.optString("message").ifEmpty { root.optString("msg") }
         if (code == QrPollResult.SUCCESS) {
-            // MUSIC_U arrives both as a Set-Cookie header and as a "cookie" string in the body.
-            val fromHeader = result.cookies.firstNotNullOfOrNull { cookie ->
-                cookie.substringAfter("MUSIC_U=", "").substringBefore(';').takeIf { it.isNotEmpty() }
-            }
-            val fromBody = runCatching {
-                root.optString("cookie").substringAfter("MUSIC_U=", "").substringBefore(';').takeIf { it.isNotEmpty() }
-            }.getOrNull()
-            val musicU = fromHeader ?: fromBody
+            val musicU = extractMusicU(result.cookies)
+                ?: extractMusicUFromBody(root)
                 ?: throw NeteaseApiException("qr login ok but no MUSIC_U cookie")
             return QrPollResult(code, musicU, message)
         }
         return QrPollResult(code, null, message)
     }
 
-    /** POST helper for weapi endpoints: encrypts [params] and returns body + Set-Cookie headers. */
-    private data class WeapiResponse(val body: String, val cookies: List<String>)
+    private data class EncryptedResponse(val body: String, val cookies: List<String>)
 
-    private fun weapiPost(url: String, params: Map<String, String>): WeapiResponse {
-        val payload = org.json.JSONObject()
-        for ((name, value) in params) payload.put(name, value)
-        val encrypted = WeapiCrypto.encrypt(payload.toString())
+    /**
+     * POST helper for eapi endpoints. [apiPath] is the /api/... path the server decrypts;
+     * the request goes to interface.music.163.com/eapi/...
+     */
+    private fun eapiPost(apiPath: String, payload: JSONObject): EncryptedResponse {
+        val json = payload.toString()
         val body = FormBody.Builder()
-            .add("params", encrypted.params)
-            .add("encSecKey", encrypted.encSecKey)
+            .add("params", EapiCrypto.encrypt(apiPath, json))
             .build()
+        val request = Request.Builder()
+            .url("$EAPI_BASE${apiPath.removePrefix("/api")}")
+            .header("User-Agent", EAPI_USER_AGENT)
+            .header("Referer", REFERER)
+            .header("Cookie", eapiCookieHeader())
+            .post(body)
+            .build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("eapi HTTP ${response.code}")
+            val text = response.body?.string() ?: throw IOException("empty eapi body")
+            if (text.isEmpty()) throw IOException("empty eapi body")
+            return EncryptedResponse(text, response.headers.values("Set-Cookie"))
+        }
+    }
+
+    private fun apiGet(url: String): EncryptedResponse {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
             .header("Referer", REFERER)
-            .post(body)
+            .get()
             .build()
         httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("weapi HTTP ${response.code}")
-            return WeapiResponse(
-                body = response.body?.string() ?: throw IOException("empty weapi body"),
-                cookies = response.headers.values("Set-Cookie"),
-            )
+            if (!response.isSuccessful) throw IOException("api GET HTTP ${response.code}")
+            val text = response.body?.string() ?: throw IOException("empty api body")
+            if (text.isEmpty()) throw IOException("empty api body")
+            return EncryptedResponse(text, response.headers.values("Set-Cookie"))
         }
+    }
+
+    private fun eapiCookieHeader(): String {
+        val visitor = visitorCookie
+        return if (visitor.isNullOrEmpty()) EAPI_COOKIE else "$EAPI_COOKIE; $visitor"
+    }
+
+    /**
+     * NetEase anonymous username = base64(deviceId + " " + md5(xor(deviceId))).
+     * Same construction the official web client uses for /api/register/anonimous.
+     */
+    private fun anonymousUsername(): String {
+        val deviceId = buildString(ANON_DEVICE_ID_LENGTH) {
+            repeat(ANON_DEVICE_ID_LENGTH) {
+                append(ANON_DEVICE_HEX[kotlin.random.Random.nextInt(ANON_DEVICE_HEX.length)])
+            }
+        }
+        val xorKey = ANON_XOR_KEY
+        val xored = buildString(deviceId.length) {
+            for (i in deviceId.indices) {
+                append((deviceId[i].code xor xorKey[i % xorKey.length].code).toChar())
+            }
+        }
+        val digest = java.security.MessageDigest.getInstance("MD5")
+            .digest(xored.toByteArray(Charsets.UTF_8))
+        val encodedId = android.util.Base64.encodeToString(digest, android.util.Base64.NO_WRAP)
+        return android.util.Base64.encodeToString(
+            "$deviceId $encodedId".toByteArray(Charsets.UTF_8),
+            android.util.Base64.NO_WRAP,
+        )
+    }
+
+    private fun extractMusicU(setCookies: List<String>): String? = extractCookie(setCookies, "MUSIC_U")
+
+    /** First Set-Cookie pair whose name equals [name]; ignores MUSIC_A_T / MUSIC_R_U etc. */
+    private fun extractCookie(setCookies: List<String>, name: String): String? {
+        val prefix = "$name="
+        return setCookies.firstNotNullOfOrNull { header ->
+            val pair = header.substringBefore(';').trim()
+            if (pair.startsWith(prefix) && !pair.startsWith("${name}_")) {
+                pair.substring(prefix.length).takeIf { it.isNotEmpty() }
+            } else {
+                null
+            }
+        }
+    }
+
+    private fun extractMusicUFromBody(root: JSONObject): String? {
+        val cookie = root.optString("cookie")
+        if (cookie.isEmpty()) return null
+        return cookie.substringAfter("MUSIC_U=", "").substringBefore(';').takeIf { it.isNotEmpty() }
+    }
+
+    private fun apiError(what: String, code: Int, root: JSONObject): String {
+        val msg = root.optString("message").ifEmpty { root.optString("msg") }
+        return "$what failed (code=$code ${msg.ifEmpty { "no message" }})"
     }
 
     /** Visible for tests: pure mapping from raw JSON text to [Song] list. */
@@ -342,6 +468,36 @@ class NeteaseClient(
         }
     }
 
+    private fun resolveCoverUrl(item: JSONObject, album: JSONObject?): String {
+        val direct = album?.optString("picUrl").orEmpty().trim()
+            .ifEmpty { item.optString("albumPic").orEmpty().trim() }
+            .ifEmpty { item.optString("picUrl").orEmpty().trim() }
+        if (direct.isNotEmpty()) return direct
+        val picStr = album?.optString("pic_str").orEmpty().trim()
+            .ifEmpty { album?.optString("picId_str").orEmpty().trim() }
+        val id = picStr.toLongOrNull()
+            ?: album?.optLong("pic", 0L)?.takeIf { it > 0L }
+            ?: album?.optLong("picId", 0L)?.takeIf { it > 0L }
+            ?: 0L
+        if (id <= 0L) return ""
+        return "https://p1.music.126.net/${encryptPicId(id)}/$id.jpg"
+    }
+
+    /** NetEase CDN path segment for an album pic id (public algorithm). */
+    private fun encryptPicId(picId: Long): String {
+        val key = PIC_XOR_KEY
+        val src = picId.toString()
+        val mixed = buildString(src.length) {
+            for (i in src.indices) {
+                append((src[i].code xor key[i % key.length].code).toChar())
+            }
+        }
+        val digest = java.security.MessageDigest.getInstance("MD5")
+            .digest(mixed.toByteArray(Charsets.ISO_8859_1))
+        return android.util.Base64.encodeToString(digest, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP)
+            .replace("=", "")
+    }
+
     /** Maps one API song object to [Song]; null when the item is unusable. */
     private fun parseSongItem(item: JSONObject): Song? {
         val songId = item.optLong("id", 0L)
@@ -350,7 +506,7 @@ class NeteaseClient(
 
         val artistNames = StringBuilder()
         var artistId = 0L
-        val artists: JSONArray? = item.optJSONArray("artists")
+        val artists: JSONArray? = item.optJSONArray("artists") ?: item.optJSONArray("ar")
         if (artists != null) {
             for (j in 0 until artists.length()) {
                 val artist = artists.optJSONObject(j) ?: continue
@@ -362,11 +518,11 @@ class NeteaseClient(
                 if (artistId == 0L) artistId = artist.optLong("id", 0L)
             }
         }
-        val album = item.optJSONObject("album")
+        val album = item.optJSONObject("album") ?: item.optJSONObject("al")
         val albumName = album?.optString("name").orEmpty().trim()
         val albumId = album?.optLong("id", 0L) ?: 0L
-        val coverUrl = album?.optString("picUrl").orEmpty().trim()
-        val durationMs = item.optLong("duration", 0L)
+        val coverUrl = resolveCoverUrl(item, album)
+        val durationMs = item.optLong("duration", 0L).let { if (it > 0L) it else item.optLong("dt", 0L) }
 
         return Song(
             songId = songId,
@@ -390,12 +546,22 @@ class NeteaseClient(
         const val SEARCH_URL = "https://music.163.com/api/search/get"
         const val PLAYLIST_DETAIL_URL = "https://music.163.com/api/v6/playlist/detail"
         const val ACCOUNT_API = "https://music.163.com/api/nuser/account/get"
-        const val WEAPI_BASE = "https://music.163.com/weapi"
+        const val API_BASE = "https://music.163.com/api"
+        const val EAPI_BASE = "https://interface.music.163.com/eapi"
         const val SEARCH_TYPE_SONG = "1"
         const val DEFAULT_LIMIT = 30
         const val OK_CODE = 200
         const val LOGIN_REQUIRED_CODE = 301
+        const val QR_TYPE = "1"
         const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        const val EAPI_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.0.18.203152"
+        const val EAPI_COOKIE =
+            "os=pc; appver=3.1.17.204416; osver=Microsoft-Windows-10-Professional-build-19045-64bit; channel=netease; __remember_me=true"
+        const val ANON_DEVICE_HEX = "0123456789ABCDEF"
+        const val ANON_DEVICE_ID_LENGTH = 52
+        const val ANON_XOR_KEY = "3go8&$8*3*3h0k(2)2"
+        const val PIC_XOR_KEY = "3go8&$8*3*3h0k(2)2"
         const val REFERER = "https://music.163.com"
         const val UNKNOWN_ARTIST = "Unknown Artist"
     }

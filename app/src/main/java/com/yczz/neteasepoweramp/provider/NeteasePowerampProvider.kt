@@ -27,6 +27,7 @@ import com.yczz.neteasepoweramp.playback.PlaybackResolver
 import com.yczz.neteasepoweramp.service.AlbumArtService
 import com.yczz.neteasepoweramp.service.AudioStreamClient
 import com.yczz.neteasepoweramp.netease.NeteaseCookieStore
+import com.yczz.neteasepoweramp.lyrics.LyricService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -70,6 +71,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
     private lateinit var songDao: SongDao
     private lateinit var playlistDao: PlaylistDao
     private lateinit var albumArtService: AlbumArtService
+    private lateinit var lyricService: LyricService
     private lateinit var playbackResolver: PlaybackResolver
     private lateinit var streamClient: AudioStreamClient
     private lateinit var historyRepository: PlaybackHistoryRepository
@@ -87,6 +89,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
         songDao = AppDatabase.get(context.applicationContext).songDao()
         playlistDao = AppDatabase.get(context.applicationContext).playlistDao()
         albumArtService = AlbumArtService(context.applicationContext)
+        lyricService = LyricService(context.applicationContext)
         // Phase-5 playback stack: caching decorator over the real NetEase URL resolver.
         // NeteasePlaybackResolver delegates the phase-1 mock test track to MockPlaybackResolver.
         streamClient = AudioStreamClient()
@@ -213,7 +216,13 @@ class NeteasePowerampProvider : DocumentsProvider() {
                         val song = songDao.getSong(songId)
                             ?: throw FileNotFoundException("song $songId is not saved in the provider database")
                         MatrixCursor(resolveTrackProjection(projection)).apply {
-                            ProviderCursorBuilder.fillSongRow(newRow(), documentId, song, servedSongSize())
+                            ProviderCursorBuilder.fillSongRow(
+                                newRow(),
+                                documentId,
+                                song,
+                                servedSongSize(),
+                                lyricsFor(song.songId),
+                            )
                         }
                     }
                 }
@@ -280,6 +289,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
                                 ProviderConstants.songDocId(song.songId),
                                 song,
                                 servedSongSize(),
+                                lyricsFor(song.songId),
                             )
                         }
                     }
@@ -319,6 +329,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
                                 ProviderConstants.playlistSongDocId(playlistId, song.songId),
                                 song,
                                 servedSongSize(),
+                                lyricsFor(song.songId),
                             )
                         }
                     }
@@ -562,6 +573,24 @@ class NeteasePowerampProvider : DocumentsProvider() {
      */
     private fun servedSongSize(): Long = testAudioManager.fileSizeOrFallback()
 
+    /**
+     * Cached LRC for Poweramp lyrics columns. Cache miss: kick a background fetch so the next
+     * scan (or Info/Tags open) can pick it up without blocking this binder call.
+     */
+    private fun lyricsFor(songId: Long): String? {
+        val raw = try {
+            lyricService.cachedRawLyrics(songId)
+        } catch (e: Exception) {
+            Log.w(TAG, "lyrics lookup failed songId=$songId", e)
+            return null
+        }
+        if (raw == null) {
+            lyricService.prefetch(songId)
+            return null
+        }
+        return raw.takeIf { it.isNotBlank() }
+    }
+
     private fun resolveProjection(projection: Array<out String>?, defaults: Array<String>): Array<String> =
         if (projection != null && projection.isNotEmpty()) {
             // Copy caller-supplied columns into a plain Array<String>; MatrixCursor matches named adds by column name.
@@ -618,6 +647,10 @@ class NeteasePowerampProvider : DocumentsProvider() {
             MediaStore.Audio.AudioColumns.ALBUM,
             MediaStore.Audio.AudioColumns.DURATION,
             TrackProviderConsts.COLUMN_GENRE,
+            TrackProviderConsts.COLUMN_FLAGS,
+            TrackProviderConsts.COLUMN_URL,
+            TrackProviderConsts.COLUMN_TRACK_LYRICS,
+            TrackProviderConsts.COLUMN_TRACK_LYRICS_SYNCED,
         )
     }
 }

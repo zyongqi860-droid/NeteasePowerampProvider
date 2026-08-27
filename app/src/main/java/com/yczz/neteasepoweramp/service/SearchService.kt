@@ -6,6 +6,7 @@ import android.util.Log
 import com.yczz.neteasepoweramp.database.AppDatabase
 import com.yczz.neteasepoweramp.database.SongEntity
 import com.yczz.neteasepoweramp.database.toEntity
+import com.yczz.neteasepoweramp.database.toSong
 import com.yczz.neteasepoweramp.model.Song
 import com.yczz.neteasepoweramp.netease.NeteaseClient
 import com.yczz.neteasepoweramp.netease.NeteaseCookieStore
@@ -72,6 +73,37 @@ class SearchService(context: Context) {
      * Persists the given songs as the current "搜索结果" content. REPLACE semantics keep ids
      * stable when the same song is saved again after metadata changed server-side.
      */
+    /** Saved songs currently visible to Poweramp. Result is delivered on [scope] (IO). */
+    fun listSavedSongs(onResult: (List<Song>) -> Unit) {
+        scope.launch {
+            val songs = try {
+                dao.getSongs().map { it.toSong() }
+            } catch (e: Exception) {
+                Log.e(ProviderConstants.TAG, "list saved songs failed", e)
+                emptyList()
+            }
+            onResult(songs)
+        }
+    }
+
+    /** Removes songs from the provider cache. Poweramp drops them on the next rescan. */
+    fun deleteSongs(songIds: List<Long>, onDone: () -> Unit) {
+        if (songIds.isEmpty()) {
+            onDone()
+            return
+        }
+        scope.launch {
+            try {
+                dao.deleteSongs(songIds)
+                notifyProviderChanged()
+                Log.i(ProviderConstants.TAG, "database delete count=${songIds.size}")
+            } catch (e: Exception) {
+                Log.e(ProviderConstants.TAG, "database delete failed count=${songIds.size}", e)
+            }
+            onDone()
+        }
+    }
+
     fun saveSongs(songs: List<Song>) {
         if (songs.isEmpty()) return
         val now = System.currentTimeMillis()
