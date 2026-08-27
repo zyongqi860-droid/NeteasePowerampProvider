@@ -12,8 +12,8 @@ android {
         applicationId = "com.yczz.neteasepoweramp"
         minSdk = 21
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-phase1"
+        versionCode = 9
+        versionName = "0.7.0-phase5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -43,7 +43,10 @@ dependencies {
     // Phase 2: NetEase search over HTTP (OkHttp only - JSON parsed with built-in org.json) and Room cache.
     // Phase 3: coroutines for the playback resolver/streaming layer.
     implementation(libs.okhttp)
+    // QR bitmap rendering for the NetEase scan-to-login flow.
+    implementation(libs.zxing.core)
     implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
     implementation(libs.coroutines.android)
     ksp(libs.room.compiler)
     // On-device provider contract tests (run as the app uid, so they can access the exported

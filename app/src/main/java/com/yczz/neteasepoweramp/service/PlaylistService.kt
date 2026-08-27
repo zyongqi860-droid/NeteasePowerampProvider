@@ -9,6 +9,7 @@ import com.yczz.neteasepoweramp.database.PlaylistTrackEntity
 import com.yczz.neteasepoweramp.database.toEntity
 import com.yczz.neteasepoweramp.model.PlaylistDetail
 import com.yczz.neteasepoweramp.netease.NeteaseClient
+import com.yczz.neteasepoweramp.netease.NeteaseCookieStore
 import com.yczz.neteasepoweramp.provider.ProviderConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +36,7 @@ class PlaylistService(context: Context) {
     }
 
     private val appContext = context.applicationContext
-    private val client = NeteaseClient()
+    private val client = NeteaseClient(NeteaseCookieStore(appContext))
     private val songDao = AppDatabase.get(appContext).songDao()
     private val playlistDao = AppDatabase.get(appContext).playlistDao()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

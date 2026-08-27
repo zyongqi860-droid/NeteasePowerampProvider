@@ -118,6 +118,37 @@ class ProviderDeviceTest {
         }
     }
 
+    /**
+     * End-to-end over the real network: NetEase v6 playlist API -> parse -> Room (songs +
+     * playlists + playlist_tracks) -> provider cursor. Fetches a real public chart playlist
+     * (网易云热歌榜) but stores it under the fixture id; cleans up afterwards.
+     */
+    @Test
+    fun realPlaylistImportFlowsThroughProvider() {
+        val pid = 888_888_002L
+        val context = context()
+        val service = com.yczz.neteasepoweramp.service.PlaylistService(context)
+        val playlistDao = AppDatabase.get(context).playlistDao()
+        val detail = com.yczz.neteasepoweramp.netease.NeteaseClient().fetchPlaylist(REAL_CHART_PLAYLIST_ID)
+        assertTrue("v6 api returned no songs", detail.songs.isNotEmpty())
+        service.storePlaylist(detail.copy(playlist = detail.playlist.copy(playlistId = pid)))
+        try {
+            val stored = playlistDao.getPlaylist(pid)
+            assertNotNull("playlist row missing", stored)
+            childDocuments(ProviderConstants.PLAYLISTS_FOLDER_PATH).use { c ->
+                val ids = collectColumn(c, DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                assertTrue("imported playlist not listed: $ids", ids.contains(ProviderConstants.playlistDocId(pid)))
+            }
+            childDocuments(ProviderConstants.playlistDocId(pid)).use { c ->
+                val names = collectColumn(c, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                assertEquals("listed count != api count", detail.songs.size, names.size)
+            }
+        } finally {
+            playlistDao.deletePlaylist(pid)
+            detail.songs.forEach { AppDatabase.get(context).songDao().deleteSong(it.songId) }
+        }
+    }
+
     @Test
     fun testFolderListsFixedTrack() {
         childDocuments(ProviderConstants.TEST_FOLDER_DOC_ID).use { c ->
@@ -216,7 +247,107 @@ class ProviderDeviceTest {
         assertTrue("unresolvable song must fail with FileNotFoundException", threw)
     }
 
+    /**
+     * End-to-end for the phase-5 blocker (song/url code=400): resolve a real, free NetEase
+     * song through the exact code path Poweramp uses - CALL_GET_URL with a full tree content
+     * URI - and verify the returned URL actually serves MP3 bytes over the network.
+     */
+    @Test
+    fun callGetUrlReturnsPlayableUrlForRealNeteaseSong() {
+        val dao = AppDatabase.get(context()).songDao()
+        dao.insertSongs(listOf(realSong()))
+        try {
+            // Exact argument shape observed from Poweramp on device (encoded tree document URI).
+            val arg = "content://${ProviderConstants.AUTHORITY}/tree/root/document/" +
+                android.net.Uri.encode(ProviderConstants.songDocId(REAL_SONG_ID))
+            val result = resolver.call(
+                Uri.parse("content://${ProviderConstants.AUTHORITY}"),
+                com.maxmpz.poweramp.player.TrackProviderConsts.CALL_GET_URL,
+                arg,
+                null,
+            )
+            assertNotNull("CALL_GET_URL returned null bundle", result)
+            val url = result!!.getString(com.maxmpz.poweramp.player.TrackProviderConsts.COLUMN_URL)
+            assertNotNull("CALL_GET_URL bundle has no url", url)
+            assertTrue("url must be https to avoid cleartext policy: $url", url!!.startsWith("https://"))
+
+            // The handed-off URL must stream real audio bytes by itself (that is what Poweramp does).
+            val head = fetchHead(url)
+            assertTrue("resolved url is not MP3: ${head.copyOf(4).toHexString()}", isMp3(head))
+        } finally {
+            dao.deleteSong(REAL_SONG_ID)
+        }
+    }
+
+    /** openDocument path for a real NetEase song: proxy fd over Range GETs must yield MP3 bytes. */
+    @Test
+    fun openDocumentStreamsRealNeteaseSong() {
+        val dao = AppDatabase.get(context()).songDao()
+        dao.insertSongs(listOf(realSong()))
+        try {
+            resolver.openFileDescriptor(documentUri(ProviderConstants.songDocId(REAL_SONG_ID)), "r")!!.use { pfd ->
+                ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                    val head = ByteArray(64 * 1024)
+                    var total = 0
+                    while (total < head.size) {
+                        val read = input.read(head, total, head.size - total)
+                        if (read < 0) break
+                        total += read
+                    }
+                    assertTrue("remote stream produced no bytes", total >= 3)
+                    assertTrue("remote bytes are not MP3 (total=$total)", isMp3(head))
+                }
+            }
+        } finally {
+            dao.deleteSong(REAL_SONG_ID)
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    /** A known free NetEase song id (used by the on-device playback chain tests). */
+    private val REAL_SONG_ID = 5_257_138L
+
+    /** NetEase 热歌榜 - a public chart playlist that answers anonymously with full tracks. */
+    private val REAL_CHART_PLAYLIST_ID = 3_778_678L
+
+    private fun realSong() = SongEntity(
+        songId = REAL_SONG_ID,
+        title = "Escape",
+        artist = "NetEase Test",
+        album = "Device Test",
+        duration = 0L,
+        coverUrl = "",
+        updatedAt = System.currentTimeMillis(),
+    )
+
+    private fun isMp3(head: ByteArray): Boolean {
+        val isId3 = head.size >= 3 && head[0] == 'I'.code.toByte() && head[1] == 'D'.code.toByte() && head[2] == '3'.code.toByte()
+        val isFrameSync = head.size >= 2 && (head[0].toInt() and 0xFF) == 0xFF && (head[1].toInt() and 0xE0) == 0xE0
+        return isId3 || isFrameSync
+    }
+
+    private fun fetchHead(url: String): ByteArray {
+        val client = okhttp3.OkHttpClient()
+        val request = okhttp3.Request.Builder().url(url).build()
+        client.newCall(request).execute().use { response ->
+            assertTrue("resolved url HTTP ${response.code}", response.isSuccessful)
+            val body = response.body ?: throw AssertionError("empty body")
+            val sink = java.io.ByteArrayOutputStream()
+            val src = body.byteStream()
+            val buf = ByteArray(64 * 1024)
+            var total = 0
+            while (total < buf.size) {
+                val read = src.read(buf, total, buf.size - total)
+                if (read < 0) break
+                total += read
+            }
+            sink.write(buf, 0, total)
+            return sink.toByteArray()
+        }
+    }
+
+    private fun ByteArray.toHexString(): String = joinToString("") { "%02x".format(it) }
 
     private fun context(): Context = InstrumentationRegistry.getInstrumentation().targetContext
 

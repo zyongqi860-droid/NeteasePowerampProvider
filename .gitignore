@@ -10,3 +10,6 @@
 /captures
 .externalNativeBuild
 .cxx
+ui.xml
+*.hprof
+*.dump

@@ -270,7 +270,15 @@ Poweramp 播放 song_999999777
 
 真机验证（vivo V2425A）：**8 项 instrument 测试全绿**。过程中修复：手写迁移 SQL 误用 Room schema dump 语法（`INDEX ...` 内嵌 CREATE TABLE → 独立 `CREATE INDEX`）；`computeIfAbsent` API 24 限制 → `putIfAbsent` 兼容写法；`assembleDebugAndroidTest` 不重打包 app APK 导致装旧包的构建陷阱（记录在案：改 APK 代码后必须跑 `assembleDebug`）。
 
-**待人工**：App 内搜索"逃跑计划/夜空中最亮的星/成都"核对 metadata；导入公开歌单后 Poweramp 查看「我的歌单」；封面显示；断网搜索不崩溃。
+真机验证记录（vivo V2425A，2026-08-26）：
+
+- ✅ **测试1/2/5 搜索与 metadata**：UI 搜索 "escape" 返回 30 条，行内 标题/歌手/专辑/时长 完整（如 ESCAPE - i-dle《I NEVER DIE》3:29）；不同关键词均可用
+- ✅ **测试3 数据库保存**：点击结果行 → `save requested songId=1927421982` → `database insert count=1`（真实动态 ID 入库）
+- ✅ **测试6 断网**：关闭 WiFi/流量后搜索 → UI 显示"搜索失败: network failure"，**App 不崩溃**（人工确认）
+- 🔧 **修复**：老歌单接口 `/api/playlist/detail` 返回 `result` 结构导致解析失败 → 改用 **`/api/v6/playlist/detail`**（`n=1000`），PC curl 已确认 v6 返回正确 `playlist` 结构；设备端全链路测试 `realPlaylistImportFlowsThroughProvider`（真实 API → 三表落库 → Provider 游标）**已编写，待设备重连执行**
+- ⏳ **测试4 Poweramp 显示 / 封面 / 测试7 权限**：待人工（Poweramp 侧操作）
+
+**待人工**：① 设备重连后跑全套 instrument（9 项）；② Poweramp 查看「我的歌单」与封面；③ 播放/seek/断网播放错误（第三阶段测试 2-7）。
 
 ## 10. 第五阶段建议
 

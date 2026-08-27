@@ -14,6 +14,7 @@ import com.yczz.neteasepoweramp.provider.ProviderConstants
 import com.yczz.neteasepoweramp.service.AudioStreamClient
 import java.io.File
 import java.io.FileNotFoundException
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Turns a [PlaybackSource] into a seekable read-only [ParcelFileDescriptor] for Poweramp.
@@ -25,10 +26,18 @@ import java.io.FileNotFoundException
  *
  * API < 26 fallback: openProxyFileDescriptor does not exist, so the source is downloaded once
  * into cacheDir and served as a plain file fd (seekable, correct, just not streaming).
+ *
+ * The callback HandlerThread is started lazily and lives for the whole process. It must never
+ * be quit: HandlerThread.getLooper() returns null once the thread has died, so a quit thread
+ * breaks every later proxy open with an NPE in Handler.<init> — i.e. the second played track
+ * would fail. One idle blocked thread per provider process costs nothing.
  */
 object AudioProxyFd {
 
     private const val TAG = ProviderConstants.TAG
+
+    /** Number of currently open proxy fds, for logging only. */
+    private val activeFdCount = AtomicInteger(0)
 
     private val callbackThread: HandlerThread by lazy {
         HandlerThread("npa-proxy-fd").apply { start() }
@@ -56,6 +65,8 @@ object AudioProxyFd {
             ?: throw FileNotFoundException("no StorageManager for proxy fd")
         var size = source.size
 
+        activeFdCount.incrementAndGet()
+
         val callback = object : ProxyFileDescriptorCallback() {
             override fun onGetSize(): Long {
                 if (size == PlaybackSource.SIZE_UNKNOWN) {
@@ -71,7 +82,8 @@ object AudioProxyFd {
                 streamClient.readRange(source, offset, size, dst)
 
             override fun onRelease() {
-                Log.i(TAG, "stream closed")
+                val remaining = activeFdCount.decrementAndGet()
+                Log.i(TAG, "stream closed, active fds=$remaining")
             }
         }
         return try {
@@ -83,6 +95,7 @@ object AudioProxyFd {
             Log.i(TAG, "stream opened host=${Uri.parse(source.url).host}")
             pfd
         } catch (e: Exception) {
+            activeFdCount.decrementAndGet()
             Log.e(TAG, "openProxyFileDescriptor failed", e)
             throw FileNotFoundException("cannot open remote stream: ${e.message}")
         }

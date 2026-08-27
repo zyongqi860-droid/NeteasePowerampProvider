@@ -16,17 +16,21 @@ import android.util.Log
 import com.maxmpz.poweramp.player.TrackProviderConsts
 import com.yczz.neteasepoweramp.R
 import com.yczz.neteasepoweramp.database.AppDatabase
+import com.yczz.neteasepoweramp.database.PlaybackHistoryRepository
 import com.yczz.neteasepoweramp.database.PlaylistDao
 import com.yczz.neteasepoweramp.database.SongDao
 import com.yczz.neteasepoweramp.playback.AudioProxyFd
 import com.yczz.neteasepoweramp.playback.CachingPlaybackResolver
 import com.yczz.neteasepoweramp.playback.MockPlaybackResolver
+import com.yczz.neteasepoweramp.playback.NeteasePlaybackResolver
 import com.yczz.neteasepoweramp.playback.PlaybackResolver
 import com.yczz.neteasepoweramp.service.AlbumArtService
 import com.yczz.neteasepoweramp.service.AudioStreamClient
+import com.yczz.neteasepoweramp.netease.NeteaseCookieStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -68,6 +72,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
     private lateinit var albumArtService: AlbumArtService
     private lateinit var playbackResolver: PlaybackResolver
     private lateinit var streamClient: AudioStreamClient
+    private lateinit var historyRepository: PlaybackHistoryRepository
 
     override fun onCreate(): Boolean {
         val context = checkNotNull(context)
@@ -82,10 +87,16 @@ class NeteasePowerampProvider : DocumentsProvider() {
         songDao = AppDatabase.get(context.applicationContext).songDao()
         playlistDao = AppDatabase.get(context.applicationContext).playlistDao()
         albumArtService = AlbumArtService(context.applicationContext)
-        // Phase-3 playback stack: caching decorator over the swappable source resolver.
-        // Phase 4 replaces MockPlaybackResolver with a licensed music-service implementation.
+        // Phase-5 playback stack: caching decorator over the real NetEase URL resolver.
+        // NeteasePlaybackResolver delegates the phase-1 mock test track to MockPlaybackResolver.
         streamClient = AudioStreamClient()
-        playbackResolver = CachingPlaybackResolver(MockPlaybackResolver(), songDao)
+        // Read the cookie lazily per resolve so Settings edits apply without restarting the process.
+        val cookieStore = NeteaseCookieStore(context.applicationContext)
+        playbackResolver = CachingPlaybackResolver(
+            NeteasePlaybackResolver(cookieProvider = { cookieStore.cookieHeader() }),
+            songDao,
+        )
+        historyRepository = PlaybackHistoryRepository(context.applicationContext)
         // Extract up front so the first playback does not pay for the copy; later calls are cheap existence checks.
         try {
             testAudioManager.ensureTestAudioFile()
@@ -406,14 +417,27 @@ class NeteasePowerampProvider : DocumentsProvider() {
      * Remote playback path. runBlocking on the binder thread is intentional: openDocument is a
      * synchronous contract and Poweramp expects it to block until the fd exists; the network
      * work itself happens on Dispatchers.IO / the proxy callback thread, never a main thread.
+     *
+     * Phase 5: added [RESOLVE_TIMEOUT_MS] so a hung resolver does not block the binder
+     * thread indefinitely — the caller (Poweramp) sees a FileNotFoundException
+     * and can surface a playback error to the user.
      */
     private fun openRemoteAudio(documentId: String, songId: Long): ParcelFileDescriptor {
         Log.i(TAG, "track requested documentId=$documentId")
+        // Fire-and-forget: record play request (completed=false). Provider cannot reliably
+        // know actual playback completion; Poweramp owns the player state. (Phase 5 reposition.)
+        recordPlayRequest(songId)
         val source = try {
             runBlocking {
                 withContext(Dispatchers.IO) {
-                    Log.i(TAG, "resolve playback source songId=$songId")
-                    playbackResolver.resolve(songId)
+                    val resolved = withTimeoutOrNull(RESOLVE_TIMEOUT_MS) {
+                        Log.i(TAG, "resolve playback source songId=$songId")
+                        playbackResolver.resolve(songId)
+                    }
+                    if (resolved == null) {
+                        throw FileNotFoundException("resolve timed out for song $songId")
+                    }
+                    resolved
                 }
             }
         } catch (fnfe: FileNotFoundException) {
@@ -430,6 +454,21 @@ class NeteasePowerampProvider : DocumentsProvider() {
             Log.e(TAG, "remote stream open failed songId=$songId", th)
             throw FileNotFoundException("cannot stream $documentId")
         }
+    }
+
+    /**
+     * Fire-and-forget: record a play *request* (not completion) on a background thread.
+     * Provider cannot reliably know whether Poweramp finished playing the track;
+     * [PlaybackHistoryRepository.recordPlay] is called with completed=false.
+     */
+    private fun recordPlayRequest(songId: Long) {
+        Thread {
+            try {
+                runBlocking { historyRepository.recordPlay(songId, durationMs = 0L, completed = false) }
+            } catch (th: Throwable) {
+                Log.w(TAG, "history record play request failed songId=$songId", th)
+            }
+        }.apply { isDaemon = true; name = "play-request-$songId" }.start()
     }
 
     /** Called by SAF to validate hierarchy; must be overridden with Root.FLAG_SUPPORTS_IS_CHILD roots. */
@@ -462,17 +501,27 @@ class NeteasePowerampProvider : DocumentsProvider() {
      * natively. Unknown songs return null - Poweramp treats it as "no url available".
      */
     private fun handleGetUrl(arg: String): Bundle? {
-        val songId = ProviderConstants.parseSongId(arg) ?: run {
-            Log.w(TAG, "get_url for non-song document $arg")
+        // Poweramp may pass either a raw documentId or a full content:// URI.
+        // Extract the documentId from either form before parsing the songId.
+        val documentId = extractDocumentId(arg)
+        val songId = ProviderConstants.parseSongId(documentId) ?: run {
+            Log.w(TAG, "get_url for non-song document $arg (parsed: $documentId)")
             return null
         }
         return try {
             val source = runBlocking {
                 withContext(Dispatchers.IO) {
-                    Log.i(TAG, "resolve playback source (get_url) songId=$songId")
-                    playbackResolver.resolve(songId)
+                    val resolved = withTimeoutOrNull(RESOLVE_TIMEOUT_MS) {
+                        Log.i(TAG, "resolve playback source (get_url) songId=$songId")
+                        playbackResolver.resolve(songId)
+                    }
+                    if (resolved == null) {
+                        Log.w(TAG, "get_url resolve timed out songId=$songId")
+                        return@withContext null
+                    }
+                    resolved
                 }
-            }
+            } ?: return null
             Bundle().apply {
                 putString(TrackProviderConsts.COLUMN_URL, source.url)
                 if (source.headers.isNotEmpty()) {
@@ -487,6 +536,22 @@ class NeteasePowerampProvider : DocumentsProvider() {
             Log.e(TAG, "get_url resolve failed songId=$songId", th)
             null
         }
+    }
+
+    /**
+     * Poweramp's CALL_GET_URL passes the document reference as either:
+     * - A raw documentId: "root/netease_search/song_123"
+     * - A full content URI: "content://authority/tree/root/document/root%2Fnetease_search%2Fsong_123"
+     * This extracts the plain documentId from either form.
+     */
+    private fun extractDocumentId(arg: String): String {
+        if (!arg.startsWith("content://")) return arg
+        // For content URIs, the documentId is the last path segment after "document/"
+        val uri = android.net.Uri.parse(arg)
+        // tree URIs: content://authority/tree/<rootId>/document/<documentId>
+        val doc = uri.lastPathSegment
+        // lastPathSegment may be the encoded documentId (e.g. "root%2Fnetease_search%2Fsong_123")
+        return android.net.Uri.decode(doc ?: arg)
     }
 
     // ---------------------------------------------------------------------- helpers
@@ -516,6 +581,9 @@ class NeteasePowerampProvider : DocumentsProvider() {
 
     private companion object {
         const val TAG = ProviderConstants.TAG
+
+        /** Timeout for playback URL resolution on binder threads (ms). */
+        const val RESOLVE_TIMEOUT_MS = 15_000L
 
         /** Label of the "搜索结果" folder shown in Poweramp and the system picker. */
         const val SEARCH_FOLDER_DISPLAY_NAME = "搜索结果"

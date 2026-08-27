@@ -49,5 +49,44 @@
 	<string name="settings_album_label">专辑:Provider Test / 歌手:NeteasePowerampProvider</string>
 	<string name="settings_poweramp_label">Poweramp:</string>
 	<string name="poweramp_detected">Poweramp detected(%1$s)</string>
-	<string name="poweramp_not_detected">未检测到 Poweramp</string>
+    <string name="poweramp_not_detected">未检测到 Poweramp</string>
+
+	<string name="qr_section_title">扫码登录(推荐)</string>
+	<string name="qr_help">点"生成二维码"后,用手机上的网易云音乐 App 扫码(首页右上角 ⌕ 搜索旁的 + / 扫一扫)并在手机上确认,自动完成登录。手机号密码登录已被网易云风控拦截(code=8821),扫码不受影响。</string>
+	<string name="qr_button">生成二维码</string>
+	<string name="qr_status_idle">尚未生成二维码</string>
+	<string name="qr_status_generating">正在生成二维码…</string>
+	<string name="qr_status_waiting">等待扫码…(用网易云 App 扫一扫)</string>
+	<string name="qr_status_scanned">已扫码,请在手机上点击确认</string>
+	<string name="qr_status_success">扫码登录成功:%1$s(%2$s),已启用 VIP 整首播放</string>
+	<string name="qr_status_expired">二维码已过期,请重新生成</string>
+	<string name="qr_status_failed">扫码登录失败:%1$s</string>
+
+	<string name="login_section_title">手机号登录(常被风控拦截)</string>
+	<string name="login_help">用网易云手机号+密码登录,登录后 VIP 歌曲可播整首。密码只用于本次登录(加密传输),不会保存。</string>
+	<string name="login_phone_hint">手机号</string>
+	<string name="login_password_hint">密码</string>
+	<string name="login_button">登录</string>
+	<string name="login_empty_input">请输入手机号和密码</string>
+	<string name="login_in_progress">登录中…</string>
+	<string name="login_success">登录成功:%1$s(%2$s),已启用 VIP 整首播放</string>
+	<string name="login_failed">登录失败:%1$s</string>
+
+	<string name="cookie_section_title">高级:手动粘贴 Cookie</string>
+	<string name="cookie_help">无法用手机号登录时(如触发风控),用浏览器登录 music.163.com 后,在开发者工具(F12)→应用→Cookie 中复制 MUSIC_U 的值粘贴到这里。</string>
+	<string name="cookie_input_hint">粘贴 MUSIC_U 值(一长串字母数字)</string>
+	<string name="cookie_save">保存</string>
+	<string name="cookie_verify">验证</string>
+	<string name="cookie_clear">清除</string>
+	<string name="cookie_empty_input">请先粘贴 MUSIC_U 值</string>
+	<string name="cookie_status_anonymous">当前:匿名(仅 30 秒试听)</string>
+	<string name="cookie_status_saved">已保存 cookie,点"验证"确认账号与 VIP 状态</string>
+	<string name="cookie_status_verifying">正在验证…</string>
+	<string name="cookie_status_ok">验证成功:%1$s(%2$s)</string>
+	<string name="cookie_status_invalid">验证失败:%1$s(cookie 可能已过期,请重新获取)</string>
+	<string name="cookie_vip_none">非 VIP</string>
+	<string name="cookie_vip_vip">VIP</string>
+	<string name="cookie_vip_svip">SVIP</string>
+	<string name="cookie_vip_other">VIP 类型 %1$d</string>
+
 </resources>

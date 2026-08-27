@@ -8,6 +8,7 @@ import com.yczz.neteasepoweramp.database.SongEntity
 import com.yczz.neteasepoweramp.database.toEntity
 import com.yczz.neteasepoweramp.model.Song
 import com.yczz.neteasepoweramp.netease.NeteaseClient
+import com.yczz.neteasepoweramp.netease.NeteaseCookieStore
 import com.yczz.neteasepoweramp.provider.ProviderConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +36,7 @@ class SearchService(context: Context) {
     }
 
     private val appContext = context.applicationContext
-    private val client = NeteaseClient()
+    private val client = NeteaseClient(NeteaseCookieStore(appContext))
     private val dao = AppDatabase.get(appContext).songDao()
 
     /** IO scope with SupervisorJob: one failed child never cancels the others. */

@@ -26,11 +26,14 @@ import com.yczz.neteasepoweramp.service.SearchService
 import com.yczz.neteasepoweramp.settings.SettingsActivity
 
 /**
- * Launcher UI. Phase 1: status, provider self-check, Poweramp shortcuts.
- * Phase 2 adds the keyword search box; tapping a result row saves it into the provider's
- * Room cache so Poweramp shows it under 网易云音乐 -> 搜索结果 after a refresh.
- * All network/database work happens inside [SearchService]; this activity only hops results
- * back to the main thread.
+ * Launcher UI.
+ *
+ * Responsibilities (Provider data-source only — no player UI):
+ * - NetEase keyword search + save results to Room (Provider cache)
+ * - Playlist import by numeric id
+ * - Sync to Poweramp (notifyChange + scan broadcast)
+ * - Provider status self-check
+ * - Open Poweramp Music Folders / Settings
  */
 class MainActivity : Activity() {
 
@@ -42,9 +45,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        // targetSdk 35 enforces edge-to-edge; without inset handling the IME pans the window and
-        // the search row can end up stuck off-screen (observed on a live Android 16 device).
-        // Resizing for IME + padding for system bars keeps every control visible and tappable.
+
+        // targetSdk 35 edge-to-edge inset handling.
         val root = findViewById<View>(R.id.main_root)
         val contentPad = (RESERVED_PAD_DP * resources.displayMetrics.density).toInt()
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
@@ -54,10 +56,13 @@ class MainActivity : Activity() {
             view.setPadding(bars.left + contentPad, bars.top + contentPad, bars.right + contentPad, bars.bottom + contentPad)
             WindowInsetsCompat.CONSUMED
         }
+
+        // Services.
         searchService = SearchService(this)
-        // Seed the phase-3 remote-stream test track (no-op once it exists in Room).
         searchService.ensureRemoteTestSong()
         playlistService = PlaylistService(this)
+
+        // Search results list.
         resultAdapter = SongAdapter()
         val resultsList = findViewById<ListView>(R.id.search_results)
         resultsList.adapter = resultAdapter
@@ -73,7 +78,50 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    /** "导入歌单" button: fetches one public playlist by numeric id into the provider database. */
+    // ==================== Search & Save ====================
+
+    /** "搜索" button / IME action. */
+    fun startSearch(view: View?) {
+        val keyword = findViewById<EditText>(R.id.search_keyword).text.toString()
+        findViewById<View>(R.id.btn_search).isEnabled = false
+        searchService.search(
+            keyword,
+            object : SearchService.SearchCallback {
+                override fun onSearchSuccess(songs: List<Song>) {
+                    mainHandler.post {
+                        findViewById<View>(R.id.btn_search).isEnabled = true
+                        if (songs.isEmpty()) {
+                            Toast.makeText(this@MainActivity, R.string.search_empty, Toast.LENGTH_SHORT).show()
+                        }
+                        resultAdapter.replace(songs)
+                    }
+                }
+
+                override fun onSearchError(message: String) {
+                    mainHandler.post {
+                        findViewById<View>(R.id.btn_search).isEnabled = true
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.search_failed, message),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun saveSong(song: Song) {
+        Log.w(ProviderConstants.TAG, "save requested songId=${song.songId}")
+        searchService.saveSongs(listOf(song))
+        Toast.makeText(this, getString(R.string.search_saved, song.title, song.artist), Toast.LENGTH_SHORT).show()
+        // Auto-rescan so the song shows up in Poweramp without a manual sync (saveSongs is async).
+        mainHandler.postDelayed({ triggerPowerampRescan(showToast = false) }, RESCAN_DELAY_MS)
+    }
+
+    // ==================== Playlist Import ====================
+
+    /** "导入歌单" button. */
     fun importPlaylist(view: View?) {
         val raw = findViewById<EditText>(R.id.playlist_id).text.toString().trim()
         val playlistId = raw.toLongOrNull()
@@ -110,12 +158,16 @@ class MainActivity : Activity() {
         )
     }
 
-    /**
-     * "同步到 Poweramp" button: notifies SAF observers and asks Poweramp (if installed) to
-     * rescan providers via its official Scanner.ACTION_SCAN_DIRS broadcast.
-     */
+    // ==================== Provider Sync & Status ====================
+
+    /** "同步到 Poweramp" button. */
     fun syncProvider(view: View?) {
         Log.w(ProviderConstants.TAG, "sync requested")
+        triggerPowerampRescan(showToast = true)
+    }
+
+    /** Notifies SAF observers and asks Poweramp to rescan providers. */
+    private fun triggerPowerampRescan(showToast: Boolean) {
         try {
             contentResolver.notifyChange(
                 DocumentsContract.buildRootsUri(ProviderConstants.AUTHORITY),
@@ -129,73 +181,15 @@ class MainActivity : Activity() {
             intent.setComponent(PowerampAPIHelper.getApiReceiverComponentName(this))
             intent.putExtra(PowerampAPI.Scanner.EXTRA_SCAN_PROVIDERS, true)
             sendBroadcast(intent)
-            Toast.makeText(this, R.string.sync_done, Toast.LENGTH_SHORT).show()
+            if (showToast) {
+                Toast.makeText(this, R.string.sync_done, Toast.LENGTH_SHORT).show()
+            }
         } catch (e: Throwable) {
             Log.e(ProviderConstants.TAG, "poweramp scan broadcast failed", e)
         }
     }
 
-    /** "搜索" button / IME action: kicks off an async NetEase keyword search. */
-    fun startSearch(view: View?) {
-        val keyword = findViewById<EditText>(R.id.search_keyword).text.toString()
-        findViewById<View>(R.id.btn_search).isEnabled = false
-        searchService.search(
-            keyword,
-            object : SearchService.SearchCallback {
-                override fun onSearchSuccess(songs: List<Song>) {
-                    mainHandler.post {
-                        findViewById<View>(R.id.btn_search).isEnabled = true
-                        if (songs.isEmpty()) {
-                            Toast.makeText(this@MainActivity, R.string.search_empty, Toast.LENGTH_SHORT).show()
-                        }
-                        resultAdapter.replace(songs)
-                    }
-                }
-
-                override fun onSearchError(message: String) {
-                    mainHandler.post {
-                        findViewById<View>(R.id.btn_search).isEnabled = true
-                        Toast.makeText(this@MainActivity, getString(R.string.search_failed, message), Toast.LENGTH_LONG).show()
-                    }
-                }
-            },
-        )
-    }
-
-    private fun saveSong(song: Song) {
-        Log.w(ProviderConstants.TAG, "save requested songId=${song.songId}")
-        searchService.saveSongs(listOf(song))
-        Toast.makeText(this, getString(R.string.search_saved, song.title, song.artist), Toast.LENGTH_SHORT).show()
-    }
-
-    /** Two-line rows: title + artist/album/duration. Kept dependency-free on purpose. */
-    private inner class SongAdapter : BaseAdapter() {
-        private val songs = ArrayList<Song>()
-
-        fun replace(newSongs: List<Song>) {
-            songs.clear()
-            songs.addAll(newSongs)
-            notifyDataSetChanged()
-        }
-
-        override fun getCount(): Int = songs.size
-
-        override fun getItem(position: Int): Song = songs[position]
-
-        override fun getItemId(position: Int): Long = songs[position].songId
-
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val view = convertView ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
-            val song = songs[position]
-            view.findViewById<TextView>(android.R.id.text1).text = song.title
-            val durationSec = song.durationMs / 1000L
-            view.findViewById<TextView>(android.R.id.text2).text =
-                "${song.artist} - ${song.album} (${durationSec / 60}:${"%02d".format(durationSec % 60)})"
-            return view
-        }
-    }
-
-    /** "检查 Provider 配置" button: queries our own roots via SAF and detects Poweramp. */
+    /** "检查 Provider 配置" button. */
     fun checkProviderConfig(view: View?) {
         Log.w(ProviderConstants.TAG, "checkProviderConfig")
 
@@ -243,7 +237,7 @@ class MainActivity : Activity() {
         findViewById<TextView>(R.id.status).text = sb.toString()
     }
 
-    /** Opens Poweramp Settings / Library / Music Folders where the provider can be added. */
+    /** Opens Poweramp Settings / Library / Music Folders. */
     fun openPowerampMusicFolders(view: View?) {
         Log.w(ProviderConstants.TAG, "openPowerampMusicFolders")
         try {
@@ -265,8 +259,39 @@ class MainActivity : Activity() {
         startActivity(Intent(this, SettingsActivity::class.java))
     }
 
-    private companion object {
-        /** Replaces the layout's static 16dp padding once insets are applied. */
-        const val RESERVED_PAD_DP = 16
+    // ==================== Song Adapter ====================
+
+    /** Two-line rows: title + artist/album/duration. */
+    private inner class SongAdapter : BaseAdapter() {
+        private val songs = ArrayList<Song>()
+
+        fun replace(newSongs: List<Song>) {
+            songs.clear()
+            songs.addAll(newSongs)
+            notifyDataSetChanged()
+        }
+
+        override fun getCount(): Int = songs.size
+
+        override fun getItem(position: Int): Song = songs[position]
+
+        override fun getItemId(position: Int): Long = songs[position].songId
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val view = convertView ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
+            val song = songs[position]
+            view.findViewById<TextView>(android.R.id.text1).text = song.title
+            val durationSec = song.durationMs / 1000L
+            view.findViewById<TextView>(android.R.id.text2).text =
+                "${song.artist} - ${song.album} (${durationSec / 60}:${"%02d".format(durationSec % 60)})"
+            return view
+        }
+    }
+
+    companion object {
+        private const val RESERVED_PAD_DP = 16
+
+        /** Gives the async Room insert time to land before Poweramp rescans. */
+        private const val RESCAN_DELAY_MS = 1500L
     }
 }

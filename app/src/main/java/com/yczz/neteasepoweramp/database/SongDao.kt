@@ -34,6 +34,13 @@ interface SongDao {
     @Query("UPDATE songs SET last_play_url = :url, url_expire_time = :expireAt WHERE song_id = :songId")
     fun updatePlaybackCache(songId: Long, url: String, expireAt: Long)
 
+    /**
+     * Drops every cached playback URL. Called when the login cookie changes: URLs resolved
+     * anonymously (30s trials) must not be reused once the user's own account is attached.
+     */
+    @Query("UPDATE songs SET last_play_url = '', url_expire_time = 0")
+    fun clearPlaybackCache()
+
     @Query("DELETE FROM songs")
     fun clearSongs()
 }
