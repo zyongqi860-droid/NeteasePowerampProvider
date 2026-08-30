@@ -143,7 +143,9 @@ class NeteaseApi(context: Context) {
             }.ifEmpty { "Unknown Artist" }
             val albumObj = item.optJSONObject("al")
             val album = albumObj?.optString("name").orEmpty().trim()
-            val coverUrl = albumObj?.optString("picUrl").orEmpty().trim()
+            // Search answers with http:// cover urls; cleartext is blocked on modern Android.
+            var coverUrl = albumObj?.optString("picUrl").orEmpty().trim()
+            if (coverUrl.startsWith("http://")) coverUrl = "https://" + coverUrl.removePrefix("http://")
             val duration = item.optLong("dt", 0L).let { if (it > 0) it else item.optLong("duration", 0L) }
             out.add(SongResult(id, title, artist, album, duration, coverUrl))
         }

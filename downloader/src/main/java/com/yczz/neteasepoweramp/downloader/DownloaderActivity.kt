@@ -566,8 +566,12 @@ class DownloaderActivity : Activity() {
                     Log.w(TAG, "lyrics tag failed", t)
                 }
                 try {
-                    val coverUrl = (song.coverUrl.ifEmpty { api.coverUrlFor(songId) })
+                    var coverUrl = (song.coverUrl.ifEmpty { api.coverUrlFor(songId) })
                         ?.takeIf { it.startsWith("http") }
+                    // Search answers carry http:// cover urls; cleartext is blocked on modern Android.
+                    if (coverUrl != null && coverUrl.startsWith("http://")) {
+                        coverUrl = "https://" + coverUrl.removePrefix("http://")
+                    }
                     val bytes = coverUrl?.let { fetchBytes(it) }
                     if (bytes == null || bytes.size <= 1024) {
                         coverNote = "封面下载失败"
