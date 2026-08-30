@@ -261,7 +261,18 @@ class DownloaderActivity : Activity() {
     private fun downloadOne(song: DocRow): Long {
         val tree = treeUri ?: throw IllegalStateException("no tree selected")
         val docUri = DocumentsContract.buildDocumentUriUsingTree(tree, song.docId)
-        val ext = sniffExtension(docUri)
+        // Fast path: resolve the CDN URL once via the provider (same call Poweramp uses for
+        // playback) and stream the whole file with a single GET - full CDN speed. The proxy-fd
+        // path is only a fallback: it issues one HTTP Range request per 64 KB read, which is
+        // why downloads used to crawl.
+        try {
+            val bytes = downloadDirect(song, docUri)
+            if (bytes != null) return bytes
+            Log.w(TAG, "no direct url for ${song.name}, falling back to proxy fd")
+        } catch (t: Throwable) {
+            Log.w(TAG, "direct download failed for ${song.name}, falling back to proxy fd", t)
+        }
+        val ext = sniffViaProxy(docUri)
         val filename = sanitize("${song.artist.ifEmpty { "Unknown" }} - ${song.title.ifEmpty { song.name }}") + ext
         return if (Build.VERSION.SDK_INT >= 29) {
             saveViaMediaStore(docUri, filename, song, ext)
@@ -270,23 +281,70 @@ class DownloaderActivity : Activity() {
         }
     }
 
-    /** The proxy fd re-opens cleanly, so sniffing reads the stream head twice. */
-    private fun sniffExtension(docUri: Uri): String {
-        openStream(docUri).use { input ->
-            val head = ByteArray(4)
-            var total = 0
-            while (total < head.size) {
-                val read = input.read(head, total, head.size - total)
-                if (read < 0) break
-                total += read
+    /** Fallback sniffing through the provider's proxy fd (one small Range read). */
+    private fun sniffViaProxy(docUri: Uri): String {
+        openStream(docUri).use { input -> return sniff(input) }
+    }
+
+    /**
+     * Single-connection download straight from the CDN. Returns null when the provider has no
+     * url for this song; throws on network/HTTP errors so the caller can fall back.
+     */
+    private fun downloadDirect(song: DocRow, docUri: Uri): Long? {
+        val tree = treeUri ?: return null
+        val bundle = contentResolver.call(tree, METHOD_GET_URL, docUri.toString(), null)
+        val url = bundle?.getString(COLUMN_URL)?.takeIf { it.startsWith("http") } ?: return null
+        Log.i(TAG, "direct download via ${Uri.parse(url).host}")
+
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        try {
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 30_000
+            conn.instanceFollowRedirects = true
+            bundle.getString(COLUMN_HEADERS)?.takeIf { it.isNotBlank() }?.let { raw ->
+                raw.split("\r\n").forEach { line ->
+                    val idx = line.indexOf(':')
+                    if (idx > 0) {
+                        conn.setRequestProperty(line.substring(0, idx).trim(), line.substring(idx + 1).trim())
+                    }
+                }
             }
-            if (total >= 4 && head[0] == 'f'.code.toByte() && head[1] == 'L'.code.toByte() &&
-                head[2] == 'a'.code.toByte() && head[3] == 'C'.code.toByte()
-            ) {
-                return ".flac"
+            conn.connect()
+            val code = conn.responseCode
+            if (code < 200 || code >= 300) throw java.io.IOException("直链 HTTP $code")
+
+            val input = conn.inputStream
+            val ext = when {
+                conn.contentType?.contains("flac", ignoreCase = true) == true -> ".flac"
+                else -> sniff(input)
             }
-            return ".mp3"
+            val filename = sanitize("${song.artist.ifEmpty { "Unknown" }} - ${song.title.ifEmpty { song.name }}") + ext
+            val written = if (Build.VERSION.SDK_INT >= 29) {
+                saveViaMediaStoreDirect(filename, song, ext, input, conn.contentLengthLong)
+            } else {
+                saveToPublicDirDirect(filename, input)
+            }
+            return written
+        } finally {
+            conn.disconnect()
         }
+    }
+
+    /** Reads the stream head to detect FLAC vs MP3. */
+    private fun sniff(input: java.io.InputStream): String {
+        val head = ByteArray(4)
+        var total = 0
+        while (total < head.size) {
+            val read = input.read(head, total, head.size - total)
+            if (read < 0) break
+            total += read
+        }
+        if (total >= 4 && head[0] == 'f'.code.toByte() && head[1] == 'L'.code.toByte() &&
+            head[2] == 'a'.code.toByte() && head[3] == 'C'.code.toByte()
+        ) {
+            return ".flac"
+        }
+        return ".mp3"
     }
 
     private fun openStream(docUri: Uri) =
@@ -312,6 +370,7 @@ class DownloaderActivity : Activity() {
         }
     }
 
+    /** Proxy-fd path (fallback): MediaStore (API 29+), lands in Music/NeteaseDownload. */
     private fun saveViaMediaStore(docUri: Uri, filename: String, song: DocRow, ext: String): Long {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
@@ -329,6 +388,31 @@ class DownloaderActivity : Activity() {
         return written
     }
 
+    /** Direct-CDN path (fast): single GET streamed straight into MediaStore. */
+    private fun saveViaMediaStoreDirect(
+        filename: String,
+        song: DocRow,
+        ext: String,
+        input: java.io.InputStream,
+        contentLength: Long,
+    ): Long {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+            put(MediaStore.MediaColumns.MIME_TYPE, if (ext == ".flac") "audio/flac" else "audio/mpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Music/NeteaseDownload")
+            put(MediaStore.Audio.Media.TITLE, song.title.ifEmpty { song.name.removeSuffix(".mp3") })
+            put(MediaStore.Audio.Media.ARTIST, song.artist.ifEmpty { "Unknown Artist" })
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val target = contentResolver.insert(collection, values)
+            ?: throw IllegalStateException("MediaStore insert failed")
+        val written = contentResolver.openOutputStream(target)!!.use { out -> copyStream(input, out, contentLength) }
+        contentResolver.update(target, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        return written
+    }
+
+    /** Proxy-fd path (fallback): public Music dir for Android 9 and below + media scan. */
     private fun saveToPublicDir(docUri: Uri, filename: String): Long {
         @Suppress("DEPRECATION")
         val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "NeteaseDownload")
@@ -337,6 +421,37 @@ class DownloaderActivity : Activity() {
         val written = FileOutputStream(target).use { out -> copyWithProgress(docUri, out) }
         MediaScannerConnection.scanFile(this, arrayOf(target.absolutePath), null, null)
         return written
+    }
+
+    /** Direct-CDN path (fast) for legacy devices. */
+    private fun saveToPublicDirDirect(filename: String, input: java.io.InputStream): Long {
+        @Suppress("DEPRECATION")
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "NeteaseDownload")
+        dir.mkdirs()
+        val target = File(dir, filename)
+        val written = FileOutputStream(target).use { out -> copyStream(input, out, -1) }
+        MediaScannerConnection.scanFile(this, arrayOf(target.absolutePath), null, null)
+        return written
+    }
+
+    /** Straight pipe for the direct-CDN path (contentLength from Content-Length when known). */
+    private fun copyStream(input: java.io.InputStream, out: java.io.OutputStream, contentLength: Long): Long {
+        val buffer = ByteArray(COPY_BUFFER)
+        var total = 0L
+        var lastReport = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            out.write(buffer, 0, read)
+            total += read
+            if (total - lastReport > PROGRESS_STEP) {
+                lastReport = total
+                val sofar = total
+                val totalLabel = if (contentLength > 0) "/${mb(contentLength)}" else ""
+                mainHandler.post { statusView.text = getString(R.string.status_downloading, "${mb(sofar)}$totalLabel") }
+            }
+        }
+        return total
     }
 
     // ------------------------------------------------------------------ helpers
@@ -359,6 +474,11 @@ class DownloaderActivity : Activity() {
         const val REQUEST_LEGACY_STORAGE = 52
         const val COPY_BUFFER = 64 * 1024
         const val PROGRESS_STEP = 512L * 1024
+
+        /** Provider call() method that resolves the CDN url at download time (Poweramp's own). */
+        const val METHOD_GET_URL = "com.maxmpz.audioplayer:get_url"
+        const val COLUMN_URL = "url"
+        const val COLUMN_HEADERS = "headers"
 
         /** Only needed below API 29; MediaStore handles storage on 29+. */
         const val LEGACY_WRITE = android.Manifest.permission.WRITE_EXTERNAL_STORAGE
