@@ -52,6 +52,20 @@
 	<string name="floating_search_hint">在 Poweramp 上直接搜网易云…</string>
 	<string name="floating_searching">正在搜索网易云…</string>
 	<string name="floating_permission_needed">需要"显示在其他应用上层"权限，请在接下来的页面允许</string>
+
+	<string name="share_receiver_label">下载歌曲（网易云）</string>
+	<string name="share_preparing">准备下载…</string>
+	<string name="share_target_dir">保存到 Music/NeteasePoweramp</string>
+	<string name="share_status_starting">正在连接网易云流媒体…</string>
+	<string name="share_status_downloading">下载中 %1$s…</string>
+	<string name="share_status_saved">已保存 %1$d 首，失败 %2$d 首</string>
+	<string name="share_status_failed">下载失败:%1$s</string>
+	<string name="share_summary">下载完成:成功 %1$d 首，失败 %2$d 首</string>
+	<string name="share_done">完成</string>
+	<string name="share_nothing">没有收到歌曲</string>
+	<string name="share_nothing_hint">在 Poweramp 的歌曲菜单里点"分享"，选择本应用即可下载</string>
+	<string name="share_unknown_song">未知歌曲</string>
+	<string name="share_permission_denied">需要存储权限才能保存文件</string>
 	<string name="btn_open_settings">设置</string>
 	<string name="main_status_idle">点击"检查 Provider 配置"验证 Provider 状态。</string>
 

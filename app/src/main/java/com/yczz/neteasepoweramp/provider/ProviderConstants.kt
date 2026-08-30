@@ -57,6 +57,20 @@ object ProviderConstants {
     fun songDocId(songId: Long): String = "$SEARCH_FOLDER_PATH/$SONG_DOC_PREFIX$songId"
 
     /**
+     * Extracts the plain documentId from a provider content URI, accepting both forms clients
+     * hand around: "content://authority/document/<id>" and
+     * "content://authority/tree/<root>/document/<encoded id>". Returns null for foreign URIs.
+     */
+    fun documentIdFromUri(uri: android.net.Uri): String? {
+        if (uri.authority != AUTHORITY) return null
+        val marker = "/document/"
+        val text = uri.toString()
+        val index = text.lastIndexOf(marker)
+        if (index < 0) return null
+        return android.net.Uri.decode(text.substring(index + marker.length))
+    }
+
+    /**
      * @return NetEase song id embedded in [documentId], or null if it is not a song id.
      * Accepts songs in any folder (search results and playlist members alike): the song suffix
      * is always "song_<digits>".
