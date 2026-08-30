@@ -24,6 +24,7 @@ import android.widget.TextView
 import android.widget.Toast
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 
 private data class DocRow(
     val docId: String,
@@ -289,46 +290,185 @@ class DownloaderActivity : Activity() {
     /**
      * Single-connection download straight from the CDN. Returns null when the provider has no
      * url for this song; throws on network/HTTP errors so the caller can fall back.
+     *
+     * NetEase's CDN caps per-connection bandwidth, so files above [MIN_SEG_FILE] are fetched
+     * with [MAX_SEGMENTS] parallel Range requests into a preallocated cache file (IDM/aria2
+     * style), then published into the media store with one fast local copy.
      */
     private fun downloadDirect(song: DocRow, docUri: Uri): Long? {
         val tree = treeUri ?: return null
         val bundle = contentResolver.call(tree, METHOD_GET_URL, docUri.toString(), null)
         val url = bundle?.getString(COLUMN_URL)?.takeIf { it.startsWith("http") } ?: return null
+        val headers = bundle.getString(COLUMN_HEADERS)
         Log.i(TAG, "direct download via ${Uri.parse(url).host}")
 
+        // Probe: response code, total size, content type + first bytes for the extension.
+        val probe = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        val ext: String
+        val size: Long
+        try {
+            probe.connectTimeout = 10_000
+            probe.readTimeout = 30_000
+            probe.instanceFollowRedirects = true
+            applyHeaders(probe, headers)
+            probe.connect()
+            val code = probe.responseCode
+            if (code < 200 || code >= 300) throw java.io.IOException("直链 HTTP $code")
+            size = probe.contentLengthLong
+            val head = ByteArray(4)
+            probe.inputStream.use { input ->
+                var total = 0
+                while (total < head.size) {
+                    val read = input.read(head, total, head.size - total)
+                    if (read < 0) break
+                    total += read
+                }
+            }
+            ext = when {
+                probe.contentType?.contains("flac", ignoreCase = true) == true -> ".flac"
+                flacMagic(head) -> ".flac"
+                else -> ".mp3"
+            }
+        } finally {
+            probe.disconnect()
+        }
+
+        val filename = sanitize("${song.artist.ifEmpty { "Unknown" }} - ${song.title.ifEmpty { song.name }}") + ext
+        if (size in 1 until MIN_SEG_FILE) {
+            return downloadSingle(url, headers, filename, song, ext, size)
+        }
+        downloadSegmented(url, headers, size, filename, song, ext)?.let { return it }
+        // Segments failed (server ignored Range etc.) - still better than the proxy fd.
+        return downloadSingle(url, headers, filename, song, ext, -1)
+    }
+
+    /** Multi-connection Range download into a preallocated cache file, then publish. */
+    private fun downloadSegmented(
+        url: String,
+        headers: String?,
+        size: Long,
+        filename: String,
+        song: DocRow,
+        ext: String,
+    ): Long? {
+        val segments = (size / SEGMENT_TARGET).toInt().coerceIn(2, MAX_SEGMENTS)
+        val cache = File(cacheDir, "ndl_${System.currentTimeMillis()}")
+        try {
+            RandomAccessFile(cache, "rw").use { it.setLength(size) }
+            val done = java.util.concurrent.atomic.AtomicLong()
+            val failed = java.util.concurrent.atomic.AtomicBoolean(false)
+            val segSize = size / segments
+            val threads = (0 until segments).map { index ->
+                val start = index * segSize
+                val end = if (index == segments - 1) size - 1 else (index + 1) * segSize - 1
+                Thread {
+                    try {
+                        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                        conn.connectTimeout = 10_000
+                        conn.readTimeout = 30_000
+                        applyHeaders(conn, headers)
+                        conn.setRequestProperty("Range", "bytes=$start-$end")
+                        conn.connect()
+                        if (conn.responseCode != 206) {
+                            throw java.io.IOException("segment HTTP ${conn.responseCode}")
+                        }
+                        conn.inputStream.use { input ->
+                            RandomAccessFile(cache, "rw").use { raf ->
+                                raf.seek(start)
+                                val buffer = ByteArray(COPY_BUFFER)
+                                var pos = start
+                                while (true) {
+                                    val read = input.read(buffer)
+                                    if (read < 0) break
+                                    raf.write(buffer, 0, read)
+                                    pos += read
+                                    done.addAndGet(read.toLong())
+                                }
+                                if (pos != end + 1) throw java.io.IOException("segment short $pos != ${end + 1}")
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        failed.set(true)
+                        Log.w(TAG, "segment $index failed", t)
+                    }
+                }.apply { isDaemon = true }
+            }
+            var ticking = true
+            val ticker = object : Runnable {
+                override fun run() {
+                    if (!ticking) return
+                    statusView.text = getString(
+                        R.string.status_downloading,
+                        "${mb(done.get())}/${mb(size)} · ${segments}线程",
+                    )
+                    mainHandler.postDelayed(this, 400)
+                }
+            }
+            mainHandler.post(ticker)
+            threads.forEach { it.start() }
+            threads.forEach { it.join() }
+            ticking = false
+            mainHandler.removeCallbacks(ticker)
+            if (failed.get() || done.get() != size) {
+                Log.w(TAG, "segmented download incomplete done=$done size=$size")
+                return null
+            }
+            cache.inputStream().use { input ->
+                if (Build.VERSION.SDK_INT >= 29) {
+                    saveViaMediaStoreDirect(filename, song, ext, input, size)
+                } else {
+                    saveToPublicDirDirect(filename, input)
+                }
+            }
+            return size
+        } finally {
+            cache.delete()
+        }
+    }
+
+    /** Small files / segment-failure fallback: one plain GET. */
+    private fun downloadSingle(
+        url: String,
+        headers: String?,
+        filename: String,
+        song: DocRow,
+        ext: String,
+        contentLength: Long,
+    ): Long {
         val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         try {
             conn.connectTimeout = 10_000
             conn.readTimeout = 30_000
             conn.instanceFollowRedirects = true
-            bundle.getString(COLUMN_HEADERS)?.takeIf { it.isNotBlank() }?.let { raw ->
-                raw.split("\r\n").forEach { line ->
-                    val idx = line.indexOf(':')
-                    if (idx > 0) {
-                        conn.setRequestProperty(line.substring(0, idx).trim(), line.substring(idx + 1).trim())
-                    }
-                }
-            }
+            applyHeaders(conn, headers)
             conn.connect()
             val code = conn.responseCode
             if (code < 200 || code >= 300) throw java.io.IOException("直链 HTTP $code")
-
             val input = conn.inputStream
-            val ext = when {
-                conn.contentType?.contains("flac", ignoreCase = true) == true -> ".flac"
-                else -> sniff(input)
-            }
-            val filename = sanitize("${song.artist.ifEmpty { "Unknown" }} - ${song.title.ifEmpty { song.name }}") + ext
-            val written = if (Build.VERSION.SDK_INT >= 29) {
-                saveViaMediaStoreDirect(filename, song, ext, input, conn.contentLengthLong)
+            return if (Build.VERSION.SDK_INT >= 29) {
+                saveViaMediaStoreDirect(filename, song, ext, input, contentLength)
             } else {
                 saveToPublicDirDirect(filename, input)
             }
-            return written
         } finally {
             conn.disconnect()
         }
     }
+
+    private fun applyHeaders(conn: java.net.HttpURLConnection, headers: String?) {
+        headers?.takeIf { it.isNotBlank() }?.let { raw ->
+            raw.split("\r\n").forEach { line ->
+                val idx = line.indexOf(':')
+                if (idx > 0) {
+                    conn.setRequestProperty(line.substring(0, idx).trim(), line.substring(idx + 1).trim())
+                }
+            }
+        }
+    }
+
+    private fun flacMagic(head: ByteArray): Boolean =
+        head.size >= 4 && head[0] == 'f'.code.toByte() && head[1] == 'L'.code.toByte() &&
+            head[2] == 'a'.code.toByte() && head[3] == 'C'.code.toByte()
 
     /** Reads the stream head to detect FLAC vs MP3. */
     private fun sniff(input: java.io.InputStream): String {
@@ -479,6 +619,11 @@ class DownloaderActivity : Activity() {
         const val METHOD_GET_URL = "com.maxmpz.audioplayer:get_url"
         const val COLUMN_URL = "url"
         const val COLUMN_HEADERS = "headers"
+
+        /** Segmented download tuning: NetEase CDN caps per-connection bandwidth. */
+        const val SEGMENT_TARGET = 4L * 1024 * 1024
+        const val MAX_SEGMENTS = 16
+        const val MIN_SEG_FILE = 8L * 1024 * 1024
 
         /** Only needed below API 29; MediaStore handles storage on 29+. */
         const val LEGACY_WRITE = android.Manifest.permission.WRITE_EXTERNAL_STORAGE

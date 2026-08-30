@@ -11,8 +11,8 @@ android {
         applicationId = "com.yczz.neteasepoweramp.downloader"
         minSdk = 21
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0-direct"
+        versionCode = 3
+        versionName = "1.2.0-segments"
     }
 
     compileOptions {
