@@ -25,17 +25,7 @@ class CachingPlaybackResolver(
 ) : PlaybackResolver {
 
     override suspend fun resolve(songId: Long): PlaybackSource {
-        // Check cache first.
-        val row = withContext(Dispatchers.IO) { dao.getSong(songId) }
-        val cachedUrl = row?.lastPlayUrl
-        if (!cachedUrl.isNullOrEmpty() && row.urlExpireTime > System.currentTimeMillis()) {
-            return PlaybackSource(
-                url = cachedUrl,
-                mimeType = DEFAULT_MIME_TYPE,
-                expireTime = row.urlExpireTime,
-            )
-        }
-
+        // Always re-resolve: CDN links 403 well before our 10 min cache window.
         // Cache miss or expired — resolve with retry.
         var lastException: Throwable? = null
         repeat(maxRetries + 1) { attempt ->

@@ -215,4 +215,22 @@
 			android:layout_weight="1"
 			style="@style/PaButton.Secondary" />
 	</LinearLayout>
+
+	<LinearLayout
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:background="@color/pa_surface"
+		android:orientation="horizontal"
+		android:paddingStart="12dp"
+		android:paddingEnd="12dp"
+		android:paddingBottom="12dp">
+
+		<Button
+			android:id="@+id/btn_floating"
+			android:onClick="toggleFloatingSearch"
+			android:text="@string/btn_floating_search"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			style="@style/PaButton.Primary" />
+	</LinearLayout>
 </LinearLayout>

@@ -19,6 +19,7 @@ import com.yczz.neteasepoweramp.database.AppDatabase
 import com.yczz.neteasepoweramp.database.PlaybackHistoryRepository
 import com.yczz.neteasepoweramp.database.PlaylistDao
 import com.yczz.neteasepoweramp.database.SongDao
+import com.yczz.neteasepoweramp.database.toEntity
 import com.yczz.neteasepoweramp.playback.AudioProxyFd
 import com.yczz.neteasepoweramp.playback.CachingPlaybackResolver
 import com.yczz.neteasepoweramp.playback.MockPlaybackResolver
@@ -72,6 +73,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
     private lateinit var playlistDao: PlaylistDao
     private lateinit var albumArtService: AlbumArtService
     private lateinit var lyricService: LyricService
+    private lateinit var neteaseClient: com.yczz.neteasepoweramp.netease.NeteaseClient
     private lateinit var playbackResolver: PlaybackResolver
     private lateinit var streamClient: AudioStreamClient
     private lateinit var historyRepository: PlaybackHistoryRepository
@@ -90,11 +92,11 @@ class NeteasePowerampProvider : DocumentsProvider() {
         playlistDao = AppDatabase.get(context.applicationContext).playlistDao()
         albumArtService = AlbumArtService(context.applicationContext)
         lyricService = LyricService(context.applicationContext)
+        val cookieStore = NeteaseCookieStore(context.applicationContext)
+        neteaseClient = com.yczz.neteasepoweramp.netease.NeteaseClient(cookieStore)
         // Phase-5 playback stack: caching decorator over the real NetEase URL resolver.
         // NeteasePlaybackResolver delegates the phase-1 mock test track to MockPlaybackResolver.
         streamClient = AudioStreamClient()
-        // Read the cookie lazily per resolve so Settings edits apply without restarting the process.
-        val cookieStore = NeteaseCookieStore(context.applicationContext)
         playbackResolver = CachingPlaybackResolver(
             NeteasePlaybackResolver(cookieProvider = { cookieStore.cookieHeader() }),
             songDao,
@@ -118,8 +120,10 @@ class NeteasePowerampProvider : DocumentsProvider() {
                     add(Root.COLUMN_ROOT_ID, ProviderConstants.ROOT_ID)
                     add(Root.COLUMN_TITLE, ProviderConstants.ROOT_TITLE)
                     add(Root.COLUMN_SUMMARY, ProviderConstants.ROOT_SUMMARY)
-                    // Required by Poweramp so sub-folder selection works in Music Folders dialog.
-                    add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_IS_CHILD)
+                    add(
+                        Root.COLUMN_FLAGS,
+                        Root.FLAG_SUPPORTS_IS_CHILD or Root.FLAG_SUPPORTS_SEARCH,
+                    )
                     add(Root.COLUMN_ICON, R.mipmap.ic_launcher)
                     add(Root.COLUMN_DOCUMENT_ID, ProviderConstants.ROOT_DOC_ID)
                 }
@@ -212,7 +216,10 @@ class NeteasePowerampProvider : DocumentsProvider() {
                         }
                     } else {
                         val songId = ProviderConstants.parseSongId(documentId)
-                        if (songId == null) throw FileNotFoundException("unknown document $documentId")
+                            ?: throw FileNotFoundException("unknown document $documentId")
+                        // Search results are persisted by querySearchDocuments before being returned,
+                        // so every real document exists here; unknown ids fail cleanly instead of
+                        // fabricating stub rows.
                         val song = songDao.getSong(songId)
                             ?: throw FileNotFoundException("song $songId is not saved in the provider database")
                         MatrixCursor(resolveTrackProjection(projection)).apply {
@@ -280,7 +287,9 @@ class NeteasePowerampProvider : DocumentsProvider() {
 
                 ProviderConstants.SEARCH_FOLDER_PATH -> {
                     // Blocking Room read on the binder thread: tiny table, no network involved.
-                    val songs = songDao.getSongs()
+                    // Relevance order (batch_pos) so Poweramp's scan/search ranking follows it.
+                    val songs = songDao.getSongsByRelevance()
+                    prefetchMissingCovers(songs.map { it.songId to it.coverUrl })
                     Log.i(TAG, "provider query songs count=${songs.size}")
                     MatrixCursor(resolveTrackProjection(projection)).apply {
                         for (song in songs) {
@@ -321,6 +330,7 @@ class NeteasePowerampProvider : DocumentsProvider() {
                     val playlistId = ProviderConstants.parsePlaylistId(parentDocumentId)
                         ?: throw FileNotFoundException("unknown parent document $parentDocumentId")
                     val songs = playlistDao.getPlaylistSongs(playlistId)
+                    prefetchMissingCovers(songs.map { it.songId to it.coverUrl })
                     Log.i(TAG, "provider query playlist songs count=${songs.size} playlistId=$playlistId")
                     MatrixCursor(resolveTrackProjection(projection)).apply {
                         for (song in songs) {
@@ -343,6 +353,51 @@ class NeteasePowerampProvider : DocumentsProvider() {
         }
     }
 
+    /**
+     * Poweramp / SAF search. Live-queries NetEase and stores hits so a tap can play immediately
+     * without first saving from this app.
+     */
+    override fun querySearchDocuments(
+        rootId: String,
+        query: String?,
+        projection: Array<out String>?,
+    ): Cursor? {
+        val keyword = query?.trim().orEmpty()
+        Log.w(TAG, "querySearchDocuments rootId=$rootId query=$keyword")
+        if (rootId != ProviderConstants.ROOT_ID || keyword.isEmpty()) {
+            return MatrixCursor(resolveTrackProjection(projection))
+        }
+        return try {
+            val songs = neteaseClient.search(keyword, SEARCH_LIMIT)
+            if (songs.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                songDao.insertSongs(songs.map { it.toEntity(now) })
+                try {
+                    context?.contentResolver?.notifyChange(
+                        android.provider.DocumentsContract.buildRootsUri(ProviderConstants.AUTHORITY),
+                        null,
+                    )
+                } catch (_: Exception) {
+                }
+            }
+            MatrixCursor(resolveTrackProjection(projection)).apply {
+                for (song in songs) {
+                    val entity = song.toEntity(System.currentTimeMillis())
+                    ProviderCursorBuilder.fillSongRow(
+                        newRow(),
+                        ProviderConstants.songDocId(song.songId),
+                        entity,
+                        servedSongSize(),
+                        lyricsFor(song.songId),
+                    )
+                }
+            }
+        } catch (th: Throwable) {
+            Log.e(TAG, "querySearchDocuments query=$keyword", th)
+            MatrixCursor(resolveTrackProjection(projection))
+        }
+    }
+
     /** Album art: test track uses the bundled cover; songs fetch/cache via AlbumArtService (phase 4). */
     override fun openDocumentThumbnail(
         documentId: String,
@@ -359,8 +414,10 @@ class NeteasePowerampProvider : DocumentsProvider() {
                 throw FileNotFoundException("no thumbnail for $documentId: ${e.message}")
             }
         }
-        val song = songDao.getSong(songId) ?: throw FileNotFoundException(documentId)
-        val cover = albumArtService.getCachedOrFetch(song.coverUrl)
+        val song = songDao.getSong(songId)
+            ?: throw FileNotFoundException(documentId)
+        val coverUrl = song.coverUrl.ifEmpty { fillMissingCover(songId) }.orEmpty()
+        val cover = albumArtService.getCachedOrFetch(coverUrl)
             ?: throw FileNotFoundException("no artwork for $documentId")
         return try {
             val pfd = ParcelFileDescriptor.open(cover, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -499,9 +556,67 @@ class NeteasePowerampProvider : DocumentsProvider() {
         if (method == TrackProviderConsts.CALL_GET_URL && arg != null) {
             return handleGetUrl(arg)
         }
+        if (method == CALL_NETEASE_SEARCH && arg != null) {
+            return handleNeteaseSearch(arg)
+        }
         // CALL_RESCAN may arrive any time; returning null (like the official handleRescan does)
         // tells Poweramp there is nothing to refresh.
         return super.call(method, arg, extras)
+    }
+
+    /**
+     * Synchronous RPC for the patched Poweramp client (scheme 1): run a live NetEase keyword
+     * search, persist the hits into the provider library and report how many rows were added.
+     * The patch calls this from Poweramp's search path, then triggers its own provider rescan
+     * so the fresh rows land in Poweramp's index before the native search query runs.
+     * Blocking on the binder thread mirrors openDocument/handleGetUrl semantics.
+     *
+     * Library hygiene (v1.0.3): each call owns one rolling batch - rows from previous batches
+     * are wiped so Poweramp's search only sees the latest keyword's results, and derivative
+     * titles (翻唱/Live/伴奏/...) are dropped unless the keyword itself asks for them.
+     */
+    private fun handleNeteaseSearch(keyword: String): Bundle? {
+        val trimmed = keyword.trim()
+        if (trimmed.isEmpty()) return Bundle().apply { putInt(EXTRA_SEARCH_COUNT, 0) }
+        return try {
+            val songs = runBlocking {
+                withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(RESOLVE_TIMEOUT_MS) {
+                        neteaseClient.search(trimmed, SEARCH_LIMIT)
+                    }
+                }
+            } ?: return Bundle().apply { putInt(EXTRA_SEARCH_COUNT, -1) }
+            // Keyword explicitly asks for derivative versions ("晴天 翻唱") -> no title filter.
+            val wantsDerivatives = JUNK_MARKERS.any { trimmed.lowercase().contains(it) }
+            val kept = if (wantsDerivatives) songs else songs.filterNot { song ->
+                val title = song.title.lowercase()
+                JUNK_MARKERS.any { title.contains(it) }
+            }
+            val batchId = System.currentTimeMillis()
+            songDao.deleteStaleSearchBatches(batchId)
+            if (kept.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                songDao.insertSongs(
+                    kept.mapIndexed { index, song ->
+                        // batch_pos = NetEase relevance order; the search folder serves rows in
+                        // this order so Poweramp's scan (and its search ranking) follows it.
+                        song.toEntity(now).copy(searchBatch = batchId, batchPos = index)
+                    },
+                )
+            }
+            try {
+                context?.contentResolver?.notifyChange(
+                    android.provider.DocumentsContract.buildRootsUri(ProviderConstants.AUTHORITY),
+                    null,
+                )
+            } catch (_: Exception) {
+            }
+            Log.w(TAG, "netease_search '$trimmed' -> ${kept.size} kept (${songs.size} raw) batch=$batchId")
+            Bundle().apply { putInt(EXTRA_SEARCH_COUNT, kept.size) }
+        } catch (th: Throwable) {
+            Log.e(TAG, "netease_search failed for '$trimmed'", th)
+            Bundle().apply { putInt(EXTRA_SEARCH_COUNT, -1) }
+        }
     }
 
     /**
@@ -573,6 +688,38 @@ class NeteasePowerampProvider : DocumentsProvider() {
      */
     private fun servedSongSize(): Long = testAudioManager.fileSizeOrFallback()
 
+    private fun prefetchMissingCovers(entries: List<Pair<Long, String>>) {
+        val missing = entries.filter { it.second.isEmpty() }.map { it.first }
+        if (missing.isEmpty()) return
+        Thread {
+            try {
+                val covers = neteaseClient.fetchCoverUrls(missing)
+                for ((id, url) in covers) {
+                    if (url.isNotEmpty()) songDao.updateCoverUrl(id, url)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "cover prefetch failed", e)
+            }
+        }.apply { isDaemon = true; name = "cover-prefetch" }.start()
+    }
+
+    /** Search often omits picUrl; fill from /api/song/detail once and persist. */
+    private fun fillMissingCover(songId: Long): String? {
+        val covers = try {
+            neteaseClient.fetchCoverUrls(listOf(songId))
+        } catch (e: Exception) {
+            Log.w(TAG, "cover detail failed songId=$songId", e)
+            return null
+        }
+        val url = covers[songId]?.takeIf { it.isNotEmpty() } ?: return null
+        try {
+            songDao.updateCoverUrl(songId, url)
+        } catch (e: Exception) {
+            Log.w(TAG, "cover persist failed songId=$songId", e)
+        }
+        return url
+    }
+
     /**
      * Cached LRC for Poweramp lyrics columns. Cache miss: kick a background fetch so the next
      * scan (or Info/Tags open) can pick it up without blocking this binder call.
@@ -614,11 +761,30 @@ class NeteasePowerampProvider : DocumentsProvider() {
         /** Timeout for playback URL resolution on binder threads (ms). */
         const val RESOLVE_TIMEOUT_MS = 15_000L
 
+        /**
+         * call() method name served to the patched Poweramp client (scheme 1): arg is the search
+         * keyword, result bundle carries [EXTRA_SEARCH_COUNT] (# hits persisted, -1 on failure).
+         */
+        const val CALL_NETEASE_SEARCH = "com.yczz.neteasepoweramp:netease_search"
+
+        /** Bundle key of [CALL_NETEASE_SEARCH] result. */
+        const val EXTRA_SEARCH_COUNT = "netease_search_count"
+
+        /**
+         * Derivative-version markers dropped from auto-search results unless the keyword itself
+         * contains one (explicit intent, e.g. "晴天 翻唱"). Matched case-insensitively on titles.
+         */
+        val JUNK_MARKERS = arrayOf(
+            "翻唱", "翻弹", "伴奏", "钢琴版", "纯音乐", "抖音", "live", "cover", "remix", "karaoke",
+        )
+
         /** Label of the "搜索结果" folder shown in Poweramp and the system picker. */
         const val SEARCH_FOLDER_DISPLAY_NAME = "搜索结果"
 
         /** Label of the "我的歌单" folder (phase 4). */
         const val PLAYLISTS_FOLDER_DISPLAY_NAME = "我的歌单"
+
+        const val SEARCH_LIMIT = 30
 
         val DEFAULT_ROOT_PROJECTION = arrayOf(
             Root.COLUMN_ROOT_ID,

@@ -14,11 +14,12 @@
 	<string name="feature_todo_playlists">¨ 网易云歌单</string>
 	<string name="feature_todo_lyrics">¨ 网易云歌词</string>
 
-	<string name="search_header">搜索结果 · 点选保存</string>
+	<string name="search_header">搜索结果 · 点选即用 Poweramp 播放</string>
 	<string name="search_hint">输入关键词,如:周杰伦</string>
 	<string name="btn_search">搜索</string>
-	<string name="search_save_hint">点击搜索结果行保存到 Provider(Poweramp 刷新后可见)</string>
+	<string name="search_save_hint">在这里搜网易云。点一首会保存并用 Poweramp 播放。Poweramp 顶部搜索只能搜已经扫进曲库的歌。</string>
 	<string name="search_saved">已保存到 Provider:%1$s - %2$s</string>
+	<string name="search_playing">正在用 Poweramp 播放:%1$s</string>
 	<string name="library_header">曲库 · %1$d 首</string>
 	<string name="library_hint">点选歌曲后点"删除所选";可点"全选"</string>
 	<string name="library_empty">还没有保存的歌曲</string>
@@ -43,6 +44,14 @@
 
 	<string name="btn_check_provider">检查配置</string>
 	<string name="btn_open_pa_music_folders">音乐文件夹</string>
+	<string name="btn_floating_search">悬浮搜索</string>
+	<string name="btn_floating_search_on">关闭悬浮搜索</string>
+	<string name="floating_channel_name">悬浮搜索</string>
+	<string name="floating_notification_title">网易云悬浮搜索运行中</string>
+	<string name="floating_notification_text">在 Poweramp 上点悬浮球即可搜歌并播放</string>
+	<string name="floating_search_hint">在 Poweramp 上直接搜网易云…</string>
+	<string name="floating_searching">正在搜索网易云…</string>
+	<string name="floating_permission_needed">需要"显示在其他应用上层"权限，请在接下来的页面允许</string>
 	<string name="btn_open_settings">设置</string>
 	<string name="main_status_idle">点击"检查 Provider 配置"验证 Provider 状态。</string>
 

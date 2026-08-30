@@ -4,6 +4,14 @@
     <!-- Phase 2 adds NetEase search, so INTERNET is required. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Floating search panel draws over Poweramp without modifying it (scheme 3). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Keeps the floating panel alive while Poweramp is in the foreground. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Notification for the floating panel's foreground service. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
@@ -53,6 +61,15 @@
             android:label="@string/web_login_title"
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <service
+            android:name=".floatsearch.FloatingSearchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="floating NetEase search panel over the player" />
+        </service>
 
     </application>
 

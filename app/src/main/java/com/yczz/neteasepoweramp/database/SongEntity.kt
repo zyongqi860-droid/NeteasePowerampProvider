@@ -54,4 +54,22 @@ data class SongEntity(
     /** Epoch ms after which [lastPlayUrl] must be re-resolved; 0 = no cached URL. */
     @ColumnInfo(name = "url_expire_time")
     val urlExpireTime: Long = 0L,
+    // ---------------------------------------------------------------- search batch (v5)
+    /**
+     * Which auto-search sync wrote this row. 0 = permanent (manual saves, playlist imports,
+     * legacy pinned rows); >0 = epoch-ms batch id of the netease_search RPC that inserted it.
+     * Each new sync wipes every other non-zero batch, so Poweramp's search only ever sees the
+     * latest keyword's results. Schema default is 1 so rows migrated from v4 count as the
+     * legacy batch and get cleaned on the first post-update sync.
+     */
+    @ColumnInfo(name = "search_batch", defaultValue = "1")
+    val searchBatch: Long = 0L,
+    /**
+     * Position of this row inside its search batch (0 = NetEase's most relevant hit).
+     * -1 = not an auto-search row (manual saves, playlist imports). The 搜索结果 folder lists
+     * batch rows by this position so Poweramp's scan - and therefore its search result order -
+     * follows NetEase's popularity ranking instead of alphabetical order.
+     */
+    @ColumnInfo(name = "batch_pos", defaultValue = "-1")
+    val batchPos: Int = -1,
 )

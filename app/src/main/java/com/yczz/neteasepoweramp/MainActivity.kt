@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var resultAdapter: SongAdapter
     private lateinit var libraryAdapter: SongAdapter
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var floatingRunning = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,7 +72,7 @@ class MainActivity : Activity() {
         resultsList.adapter = resultAdapter
         resultsList.setOnItemClickListener { _, _, position, _ ->
             val song = resultAdapter.getItem(position) ?: return@setOnItemClickListener
-            saveSong(song)
+            saveAndPlay(song)
         }
 
         libraryAdapter = SongAdapter(checkable = true)
@@ -124,15 +125,37 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun saveSong(song: Song) {
-        Log.w(ProviderConstants.TAG, "save requested songId=${song.songId}")
-        searchService.saveSongs(listOf(song))
-        Toast.makeText(this, getString(R.string.search_saved, song.title, song.artist), Toast.LENGTH_SHORT).show()
-        // Auto-rescan so the song shows up in Poweramp without a manual sync (saveSongs is async).
-        mainHandler.postDelayed({
-            refreshLibrary()
+    private fun saveAndPlay(song: Song) {
+        Log.w(ProviderConstants.TAG, "save+play requested songId=${song.songId}")
+        searchService.saveSongs(listOf(song)) {
+            mainHandler.post {
+                refreshLibrary()
+                playInPoweramp(song)
+            }
+        }
+    }
+
+    /** Hands the just-saved document to Poweramp so it plays without a library search. */
+    private fun playInPoweramp(song: Song) {
+        val tree = DocumentsContract.buildTreeDocumentUri(
+            ProviderConstants.AUTHORITY,
+            ProviderConstants.ROOT_DOC_ID,
+        )
+        val doc = DocumentsContract.buildDocumentUriUsingTree(tree, ProviderConstants.songDocId(song.songId))
+        try {
+            val pak = PowerampAPIHelper.getPowerampPackageName(this)
+            grantUriPermission(pak, doc, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val open = Intent(PowerampAPI.ACTION_OPEN_LIST_AND_PLAY)
+            open.setPackage(pak)
+            open.setDataAndType(doc, "audio/mpeg")
+            open.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(open)
+            Toast.makeText(this, getString(R.string.search_playing, song.title), Toast.LENGTH_SHORT).show()
+        } catch (e: Throwable) {
+            Log.e(ProviderConstants.TAG, "open Poweramp play failed, falling back to scan", e)
             triggerPowerampRescan(showToast = false)
-        }, RESCAN_DELAY_MS)
+            Toast.makeText(this, getString(R.string.search_saved, song.title, song.artist), Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun confirmDeleteSelected() {
@@ -308,6 +331,37 @@ class MainActivity : Activity() {
 
     fun openSettings(view: View?) {
         startActivity(Intent(this, SettingsActivity::class.java))
+    }
+
+    /**
+     * Floating search toggle (scheme 3: search NetEase on top of Poweramp, zero Poweramp changes).
+     * First use needs the "display over other apps" special permission, granted per app.
+     */
+    fun toggleFloatingSearch(view: View?) {
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, R.string.floating_permission_needed, Toast.LENGTH_LONG).show()
+            try {
+                startActivity(
+                    Intent(
+                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:$packageName"),
+                    ),
+                )
+            } catch (e: Throwable) {
+                Log.e(ProviderConstants.TAG, "no overlay settings screen", e)
+            }
+            return
+        }
+        if (floatingRunning) {
+            com.yczz.neteasepoweramp.floatsearch.FloatingSearchService.stop(this)
+            floatingRunning = false
+            findViewById<View>(R.id.btn_floating).isEnabled = true
+            findViewById<android.widget.Button>(R.id.btn_floating).setText(R.string.btn_floating_search)
+        } else {
+            com.yczz.neteasepoweramp.floatsearch.FloatingSearchService.start(this)
+            floatingRunning = true
+            findViewById<android.widget.Button>(R.id.btn_floating).setText(R.string.btn_floating_search_on)
+        }
     }
 
     // ==================== Song Adapter ====================

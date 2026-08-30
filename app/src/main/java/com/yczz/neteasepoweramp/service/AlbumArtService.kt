@@ -50,6 +50,10 @@ class AlbumArtService(context: Context) {
             if (target.isFile && target.length() > 0L) return target
             return try {
                 download(coverUrl, target)
+                if (!isImage(target)) {
+                    target.delete()
+                    throw IOException("cover not an image")
+                }
                 target
             } catch (e: IOException) {
                 Log.e(ProviderConstants.TAG, "cover download failed: ${e.message}")
@@ -68,25 +72,44 @@ class AlbumArtService(context: Context) {
     }
 
     private fun download(coverUrl: String, target: File) {
-        val request = Request.Builder()
-            .url(sizedUrl(coverUrl))
-            .header("User-Agent", USER_AGENT)
-            .header("Referer", REFERER)
-            .build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("cover HTTP ${response.code}")
-            val bytes = response.body?.bytes() ?: throw IOException("cover empty body")
-            if (bytes.isEmpty()) throw IOException("cover zero bytes")
-            target.parentFile?.mkdirs()
-            target.writeBytes(bytes)
-            Log.i(ProviderConstants.TAG, "cover cached size=${bytes.size}")
+        val https = if (coverUrl.startsWith("http://")) "https://" + coverUrl.removePrefix("http://") else coverUrl
+        val urls = listOf(
+            if (https.contains('?')) https else "$https?param=$COVER_SIZE",
+            https.substringBefore('?'),
+        ).distinct()
+        var lastError: IOException? = null
+        for (url in urls) {
+            try {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", USER_AGENT)
+                    .build()
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("cover HTTP ${response.code}")
+                    val bytes = response.body?.bytes() ?: throw IOException("cover empty body")
+                    if (bytes.size < 32) throw IOException("cover too small (${bytes.size})")
+                    target.parentFile?.mkdirs()
+                    target.writeBytes(bytes)
+                    Log.i(ProviderConstants.TAG, "cover cached size=${bytes.size}")
+                }
+                return
+            } catch (e: IOException) {
+                lastError = e
+            }
         }
+        throw lastError ?: IOException("cover download failed")
     }
 
-    /** Appends the NetEase CDN resize hint unless the URL already carries a query string. */
-    private fun sizedUrl(coverUrl: String): String {
-        val https = if (coverUrl.startsWith("http://")) "https://" + coverUrl.removePrefix("http://") else coverUrl
-        return if (https.contains('?')) https else "$https?param=$COVER_SIZE"
+    private fun isImage(file: File): Boolean {
+        if (!file.isFile || file.length() < 8L) return false
+        val header = ByteArray(12)
+        val n = file.inputStream().use { it.read(header) }
+        if (n < 3) return false
+        val jpeg = header[0] == 0xFF.toByte() && header[1] == 0xD8.toByte()
+        val png = header[0] == 0x89.toByte() && header[1] == 0x50.toByte() && header[2] == 0x4E.toByte()
+        val gif = header[0] == 0x47.toByte() && header[1] == 0x49.toByte() && header[2] == 0x46.toByte()
+        val webp = n >= 12 && header[0] == 0x52.toByte() && header[8] == 0x57.toByte()
+        return jpeg || png || gif || webp
     }
 
     private companion object {

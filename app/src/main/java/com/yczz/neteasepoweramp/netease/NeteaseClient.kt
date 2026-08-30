@@ -51,6 +51,7 @@ class NeteaseClient(
             .add("type", SEARCH_TYPE_SONG)
             .add("limit", limit.toString())
             .add("offset", "0")
+            .add("total", "true")
             .build()
 
         val request = Request.Builder()
@@ -67,8 +68,65 @@ class NeteaseClient(
                 throw IOException("search HTTP ${response.code}")
             }
             val payload = response.body?.string() ?: throw IOException("empty search response body")
-            return parseSongs(payload)
+            val songs = parseSongs(payload)
+            return enrichCovers(songs)
         }
+    }
+
+    /**
+     * Fills missing album cover URLs via /api/song/detail (search often omits picUrl).
+     * Songs that already have a cover are left untouched. Failures are ignored.
+     */
+    fun enrichCovers(songs: List<Song>): List<Song> {
+        val missing = songs.filter { it.coverUrl.isEmpty() }.map { it.songId }
+        if (missing.isEmpty()) return songs
+        val covers = try {
+            fetchCoverUrls(missing)
+        } catch (_: Exception) {
+            return songs
+        }
+        if (covers.isEmpty()) return songs
+        return songs.map { song ->
+            val cover = covers[song.songId]
+            if (song.coverUrl.isEmpty() && !cover.isNullOrEmpty()) song.copy(coverUrl = cover) else song
+        }
+    }
+
+    /** Cover URL per song id; empty map on failure. Blocking IO. */
+    fun fetchCoverUrls(songIds: List<Long>): Map<Long, String> {
+        if (songIds.isEmpty()) return emptyMap()
+        val ids = songIds.take(50).joinToString(",")
+        val request = Request.Builder()
+            .url("$SONG_DETAIL_API?ids=$ids")
+            .header("User-Agent", USER_AGENT)
+            .header("Referer", REFERER)
+            .apply { cookieStore?.cookieHeader()?.let { header("Cookie", it) } }
+            .get()
+            .build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return emptyMap()
+            val payload = response.body?.string() ?: return emptyMap()
+            return parseCoverUrls(payload)
+        }
+    }
+
+    internal fun parseCoverUrls(json: String): Map<Long, String> {
+        val root = try {
+            JSONObject(json)
+        } catch (_: JSONException) {
+            return emptyMap()
+        }
+        if (root.optInt("code", -1) != OK_CODE) return emptyMap()
+        val songs = root.optJSONArray("songs") ?: return emptyMap()
+        val out = HashMap<Long, String>(songs.length())
+        for (i in 0 until songs.length()) {
+            val item = songs.optJSONObject(i) ?: continue
+            val id = item.optLong("id", 0L)
+            if (id <= 0L) continue
+            val cover = resolveCoverUrl(item, item.optJSONObject("al") ?: item.optJSONObject("album"))
+            if (cover.isNotEmpty()) out[id] = cover
+        }
+        return out
     }
 
     /**
@@ -416,7 +474,8 @@ class NeteaseClient(
                 throw IOException("playlist HTTP ${response.code}")
             }
             val payload = response.body?.string() ?: throw IOException("empty playlist response body")
-            return parsePlaylist(payload, playlistId)
+            val detail = parsePlaylist(payload, playlistId)
+            return detail.copy(songs = enrichCovers(detail.songs))
         }
     }
 
@@ -543,7 +602,8 @@ class NeteaseClient(
     private companion object {
         const val CONNECT_TIMEOUT_SECONDS = 10L
         const val READ_TIMEOUT_SECONDS = 15L
-        const val SEARCH_URL = "https://music.163.com/api/search/get"
+        const val SEARCH_URL = "https://music.163.com/api/cloudsearch/pc"
+        const val SONG_DETAIL_API = "https://music.163.com/api/song/detail"
         const val PLAYLIST_DETAIL_URL = "https://music.163.com/api/v6/playlist/detail"
         const val ACCOUNT_API = "https://music.163.com/api/nuser/account/get"
         const val API_BASE = "https://music.163.com/api"

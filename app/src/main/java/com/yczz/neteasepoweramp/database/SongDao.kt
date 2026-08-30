@@ -20,6 +20,17 @@ interface SongDao {
     @Query("SELECT * FROM songs ORDER BY artist, title")
     fun getSongs(): List<SongEntity>
 
+    /**
+     * 搜索结果 folder order for Poweramp: auto-search batch rows first in NetEase relevance
+     * order (batch_pos 0 = most popular), manual/pinned rows after them alphabetically.
+     * Poweramp scans in this order, which is what its search result ordering follows.
+     */
+    @Query(
+        "SELECT * FROM songs ORDER BY " +
+            "CASE WHEN batch_pos >= 0 THEN 0 ELSE 1 END, batch_pos, artist, title",
+    )
+    fun getSongsByRelevance(): List<SongEntity>
+
     @Query("SELECT * FROM songs WHERE title LIKE '%' || :keyword || '%' OR artist LIKE '%' || :keyword || '%' OR album LIKE '%' || :keyword || '%' ORDER BY artist, title")
     fun searchSongs(keyword: String): List<SongEntity>
 
@@ -36,6 +47,16 @@ interface SongDao {
     /** Persists the resolved playback URL cache for one song (phase 3, CachingPlaybackResolver). */
     @Query("UPDATE songs SET last_play_url = :url, url_expire_time = :expireAt WHERE song_id = :songId")
     fun updatePlaybackCache(songId: Long, url: String, expireAt: Long)
+
+    /**
+     * Rolls the auto-search library window: drops every row written by an earlier netease_search
+     * batch (rows never touched by auto-search have search_batch = 0 and survive forever).
+     */
+    @Query("DELETE FROM songs WHERE search_batch != 0 AND search_batch != :keepBatch")
+    fun deleteStaleSearchBatches(keepBatch: Long)
+
+    @Query("UPDATE songs SET cover_url = :coverUrl WHERE song_id = :songId")
+    fun updateCoverUrl(songId: Long, coverUrl: String)
 
     /**
      * Drops every cached playback URL. Called when the login cookie changes: URLs resolved

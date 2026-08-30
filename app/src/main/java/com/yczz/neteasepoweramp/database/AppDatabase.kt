@@ -16,6 +16,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * - v2: + playback cache columns on songs (phase 3)
  * - v3: + source metadata, albums, playlists, playlist_tracks (phase 4)
  * - v4: + lyrics, playback_history tables + indexes (phase 5)
+ * - v5: + songs.search_batch (rolling auto-search window)
+ * - v6: + songs.batch_pos (relevance order inside the batch)
  */
 @Database(
     entities = [
@@ -26,7 +28,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LyricEntity::class,
         PlaybackHistoryEntity::class,
     ],
-    version = 4,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -117,6 +119,20 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v4 -> v5: rolling search batch column. Legacy rows join batch 1 (first sync cleans them). */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE songs ADD COLUMN search_batch INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        /** v5 -> v6: relevance position of a row inside its search batch. */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE songs ADD COLUMN batch_pos INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -128,7 +144,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     NAME,
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                     .also { instance = it }
             }

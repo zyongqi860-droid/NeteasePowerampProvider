@@ -58,6 +58,7 @@ class ProviderDeviceTest {
             )
             val flags = c.getInt(c.getColumnIndexOrThrow(DocumentsContract.Root.COLUMN_FLAGS))
             assertTrue("root must advertise FLAG_SUPPORTS_IS_CHILD", flags and DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD != 0)
+            assertTrue("root must advertise FLAG_SUPPORTS_SEARCH", flags and DocumentsContract.Root.FLAG_SUPPORTS_SEARCH != 0)
         }
     }
 
@@ -300,6 +301,71 @@ class ProviderDeviceTest {
             }
         } finally {
             dao.deleteSong(REAL_SONG_ID)
+        }
+    }
+
+    /**
+     * Simulates the exact Poweramp in-app search flow (no manual save step):
+     * 1. Poweramp sees root FLAG_SUPPORTS_SEARCH during folder selection,
+     * 2. user types a keyword -> framework routes to provider.querySearchDocuments() live-NetEase query,
+     * 3. user taps a result -> CALL_GET_URL resolves the dynamic URL at playback time,
+     * 4. the resolved URL streams real MP3 bytes (what Poweramp's player consumes).
+     */
+    @Test
+    fun powerampInAppSearchFindsAndPlaysNeteaseSongs() {
+        // (2) Live search via the framework ContentResolver - identical to what Poweramp does.
+        // The keyword travels in the query Bundle (QUERY_ARG_DISPLAY_NAME); the framework's
+        // DocumentsProvider extracts it and hands our String-version override that exact term.
+        val searchUri = DocumentsContract.buildSearchDocumentsUri(
+            ProviderConstants.AUTHORITY, ProviderConstants.ROOT_ID, "晴天",
+        )
+        val queryArgs = android.os.Bundle().apply {
+            putString(DocumentsContract.QUERY_ARG_DISPLAY_NAME, "晴天")
+        }
+        var cursor: Cursor? = null
+        val docIds = ArrayList<String>()
+        try {
+            cursor = resolver.query(searchUri, null, queryArgs, null)
+            assertNotNull("search query returned no cursor for 晴天", cursor)
+
+            // (3) Collect results as Poweramp would render them.
+            while (cursor!!.moveToNext()) {
+                docIds.add(cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)))
+            }
+            assertTrue("search for 晴天 returned no songs: $docIds", docIds.isNotEmpty())
+
+            // Each listed document must be playable on tap. Poweramp resolves the dynamic URL
+            // via CALL_GET_URL at playback start; try results until one is fully playable
+            // (a few top hits may be VIP-gated without login - that is expected, not a bug).
+            var playable = 0
+            for (docId in docIds.take(8)) {
+                val songId = ProviderConstants.parseSongId(docId) ?: continue
+                val bundle = resolver.call(
+                    Uri.parse("content://${ProviderConstants.AUTHORITY}"),
+                    com.maxmpz.poweramp.player.TrackProviderConsts.CALL_GET_URL,
+                    "content://${ProviderConstants.AUTHORITY}/tree/root/document/" + android.net.Uri.encode(docId),
+                    null,
+                )
+                if (bundle == null) continue
+                val url = bundle.getString(com.maxmpz.poweramp.player.TrackProviderConsts.COLUMN_URL) ?: continue
+                if (!url.startsWith("https://")) continue
+                try {
+                    assertTrue("$docId resolved url is not MP3", isMp3(fetchHead(url)))
+                    playable++
+                } catch (e: AssertionError) {
+                    throw e
+                } catch (_: Exception) {
+                    // URL dead on arrival - Poweramp would show a playback error for this track.
+                }
+            }
+            assertTrue("no searchable result was playable via CALL_GET_URL", playable > 0)
+        } finally {
+            cursor?.close()
+            // Remove the rows this search run inserted; they are re-creatable by searching again.
+            val dao = AppDatabase.get(context()).songDao()
+            for (docId in docIds) {
+                ProviderConstants.parseSongId(docId)?.let(dao::deleteSong)
+            }
         }
     }
 

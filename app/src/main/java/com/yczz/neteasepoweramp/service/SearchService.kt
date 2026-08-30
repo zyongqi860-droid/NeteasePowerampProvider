@@ -104,8 +104,11 @@ class SearchService(context: Context) {
         }
     }
 
-    fun saveSongs(songs: List<Song>) {
-        if (songs.isEmpty()) return
+    fun saveSongs(songs: List<Song>, onDone: (() -> Unit)? = null) {
+        if (songs.isEmpty()) {
+            onDone?.invoke()
+            return
+        }
         val now = System.currentTimeMillis()
         scope.launch {
             try {
@@ -113,9 +116,9 @@ class SearchService(context: Context) {
                 Log.i(ProviderConstants.TAG, "database insert count=${songs.size}")
                 notifyProviderChanged()
             } catch (e: Exception) {
-                // Never crash the UI; the provider simply keeps showing the previous rows.
                 Log.e(ProviderConstants.TAG, "database insert failed", e)
             }
+            onDone?.invoke()
         }
     }
 
