@@ -18,3 +18,4 @@ rootProject.name = "NeteasePowerampProvider"
 
 include(":app")
 include(":poweramp_api_lib")
+include(":downloader")

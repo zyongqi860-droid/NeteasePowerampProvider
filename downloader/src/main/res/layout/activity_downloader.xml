@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+	android:layout_width="match_parent"
+	android:layout_height="match_parent"
+	android:background="#FF141414"
+	android:orientation="vertical"
+	android:paddingTop="12dp">
+
+	<TextView
+		android:id="@+id/path_view"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:paddingStart="16dp"
+		android:paddingEnd="16dp"
+		android:textColor="#FFF57C22"
+		android:textSize="14sp"
+		android:textStyle="bold" />
+
+	<TextView
+		android:id="@+id/status_view"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:paddingStart="16dp"
+		android:paddingEnd="16dp"
+		android:paddingTop="4dp"
+		android:textColor="#FFAAAAAA"
+		android:textSize="12sp" />
+
+	<Button
+		android:id="@+id/btn_pick"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:layout_marginStart="16dp"
+		android:layout_marginEnd="16dp"
+		android:layout_marginTop="12dp"
+		android:text="@string/pick_root"
+		android:visibility="gone" />
+
+	<Button
+		android:id="@+id/btn_download_all"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:layout_marginStart="16dp"
+		android:layout_marginEnd="16dp"
+		android:layout_marginTop="6dp"
+		android:text="@string/download_all"
+		android:visibility="gone" />
+
+	<ListView
+		android:id="@+id/doc_list"
+		android:layout_width="match_parent"
+		android:layout_height="0dp"
+		android:layout_weight="1"
+		android:layout_marginTop="6dp"
+		android:divider="#22FFFFFF"
+		android:dividerHeight="1dp" />
+</LinearLayout>

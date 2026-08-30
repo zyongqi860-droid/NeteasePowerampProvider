@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+	<string name="app_name">网易云下载器</string>
+	<string name="pick_root">选择网易云曲库</string>
+	<string name="pick_hint">像 Poweramp 一样连接数据源：点击下方按钮，在系统选择器里选择「Netease Poweramp」。</string>
+	<string name="download_all">下载本页全部歌曲</string>
+	<string name="status_downloading">下载中 %1$s…</string>
+	<string name="status_saved">已保存:%1$s</string>
+	<string name="status_failed">下载失败:%1$s</string>
+	<string name="status_empty">此文件夹没有歌曲</string>
+	<string name="target_dir">保存到 Music/NeteaseDownload</string>
+	<string name="download_summary">下载完成:成功 %1$d，失败 %2$d</string>
+</resources>

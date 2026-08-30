@@ -4,9 +4,9 @@
 /local.properties
 /.idea
 .DS_Store
-/build
-/app/build
-/poweramp_api_lib/build
+build/
+
+
 /captures
 .externalNativeBuild
 .cxx
