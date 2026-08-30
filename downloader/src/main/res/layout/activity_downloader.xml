@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+	android:id="@+id/downloader_root"
 	android:layout_width="match_parent"
 	android:layout_height="match_parent"
 	android:background="#FF141414"
 	android:orientation="vertical"
-	android:paddingTop="12dp">
+	android:paddingTop="4dp">
 
 	<LinearLayout
 		android:layout_width="match_parent"
@@ -43,6 +44,17 @@
 			android:paddingStart="12dp"
 			android:paddingEnd="12dp"
 			android:text="@string/btn_mode_search" />
+
+		<Button
+			android:id="@+id/btn_threads"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_marginStart="8dp"
+			android:minHeight="0dp"
+			android:minWidth="0dp"
+			android:paddingStart="12dp"
+			android:paddingEnd="12dp"
+			android:text="@string/threads_button" />
 	</LinearLayout>
 
 	<LinearLayout

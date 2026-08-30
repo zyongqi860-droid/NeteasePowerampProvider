@@ -23,6 +23,8 @@
 	<string name="search_running">正在搜索网易云…</string>
 	<string name="search_done">找到 %1$d 首，点一首即下载</string>
 	<string name="download_all_results">下载全部搜索结果</string>
+	<string name="threads_button">⚙ %1$d 线程</string>
+	<string name="threads_dialog_title">下载线程数（对 CDN 的并行连接数，越大越快也越激进）</string>
 
 	<string name="login_web_loading">正在打开网易云登录页…（页面里可扫码/短信/密码登录，登录成功自动返回）</string>
 	<string name="login_paste_cookie">粘贴 Cookie 备用</string>

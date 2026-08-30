@@ -83,6 +83,16 @@ class DownloaderActivity : Activity() {
         searchInput = findViewById(R.id.search_input)
         listView = findViewById(R.id.doc_list)
 
+        // targetSdk 35 is edge-to-edge: pad content below the system status bar.
+        val root = findViewById<View>(R.id.downloader_root)
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            androidx.core.view.WindowInsetsCompat.CONSUMED
+        }
+        updateThreadsLabel()
+        findViewById<Button>(R.id.btn_threads).setOnClickListener { showThreadDialog() }
+
         loginButton.setOnClickListener { startActivity(Intent(this, LoginActivity::class.java)) }
         modeButton.setOnClickListener { setMode(if (mode == Mode.SEARCH) Mode.BROWSE else Mode.SEARCH) }
         findViewById<Button>(R.id.btn_search).setOnClickListener { runSearch() }
@@ -107,6 +117,28 @@ class DownloaderActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshAccount()
+    }
+
+    private fun updateThreadsLabel() {
+        findViewById<Button>(R.id.btn_threads).text = getString(R.string.threads_button, threadsPref())
+    }
+
+    private fun threadsPref(): Int = prefs.getInt(KEY_THREADS, DEFAULT_THREADS)
+
+    private fun showThreadDialog() {
+        val options = intArrayOf(2, 4, 8, 16, 24, 32)
+        val current = threadsPref()
+        val checked = options.indexOf(current).coerceAtLeast(0)
+        val labels = options.map { "$it" }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.threads_dialog_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                prefs.edit().putInt(KEY_THREADS, options[which]).apply()
+                updateThreadsLabel()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun refreshAccount() {
@@ -491,7 +523,7 @@ class DownloaderActivity : Activity() {
         song: DocRow,
         ext: String,
     ): Long? {
-        val segments = (size / SEGMENT_TARGET).toInt().coerceIn(2, MAX_SEGMENTS)
+        val segments = (size / SEGMENT_TARGET).toInt().coerceIn(2, threadsPref())
         val cache = File(cacheDir, "ndl_${System.currentTimeMillis()}")
         try {
             RandomAccessFile(cache, "rw").use { it.setLength(size) }
@@ -732,8 +764,9 @@ class DownloaderActivity : Activity() {
 
         /** Segmented download tuning: NetEase CDN caps per-connection bandwidth. */
         const val SEGMENT_TARGET = 4L * 1024 * 1024
-        const val MAX_SEGMENTS = 16
+        const val DEFAULT_THREADS = 16
         const val MIN_SEG_FILE = 8L * 1024 * 1024
+        const val KEY_THREADS = "download_threads"
 
         /** Only needed below API 29; MediaStore handles storage on 29+. */
         const val LEGACY_WRITE = android.Manifest.permission.WRITE_EXTERNAL_STORAGE

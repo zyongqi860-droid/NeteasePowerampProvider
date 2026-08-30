@@ -41,6 +41,14 @@ class LoginActivity : Activity() {
         webView = findViewById(R.id.login_web)
         val progress = findViewById<ProgressBar>(R.id.login_progress)
 
+        // targetSdk 35 is edge-to-edge: keep the status line below the system status bar.
+        val root = findViewById<View>(R.id.login_root)
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            androidx.core.view.WindowInsetsCompat.CONSUMED
+        }
+
         refreshStatus()
 
         findViewById<Button>(R.id.btn_paste_cookie).setOnClickListener { pasteCookieDialog() }
