@@ -35,7 +35,13 @@ private data class DocRow(
     val title: String,
     val artist: String,
     val durationMs: Long,
-)
+    val album: String = "",
+    val coverUrl: String = "",
+) {
+    /** NetEase song id parsed from the "song_<id>" suffix, or null for folders/unknown. */
+    val songId: Long?
+        get() = docId.substringAfterLast("song_").toLongOrNull()
+}
 
 /**
  * Standalone NetEase downloader: login (QR / cookie), keyword search, multi-threaded CDN
@@ -66,6 +72,9 @@ class DownloaderActivity : Activity() {
     private val navStack = ArrayDeque<Pair<String, String>>()
     private var browseRows: List<DocRow> = emptyList()
     private var searchResults: List<NeteaseApi.SongResult> = emptyList()
+
+    /** Keys of rows picked for batch download (browse docIds / "s<songId>" for search hits). */
+    private val selectedKeys = LinkedHashSet<String>()
 
     private var downloading = false
 
@@ -196,6 +205,7 @@ class DownloaderActivity : Activity() {
             }
             if (results != null) {
                 searchResults = results
+                selectedKeys.clear()
                 mainHandler.post {
                     statusView.text = getString(R.string.search_done, results.size)
                     renderList()
@@ -215,8 +225,11 @@ class DownloaderActivity : Activity() {
             title = song.title,
             artist = song.artist,
             durationMs = song.durationMs,
+            album = song.album,
+            coverUrl = song.coverUrl,
         )
-        downloadFromCdn(docRow, resolved.url, null)
+        val cdn = downloadFromCdn(docRow, resolved.url, null)
+        tagAndPublish(docRow, cdn)
     }
 
     // ------------------------------------------------------------------ browse mode (SAF)
@@ -305,44 +318,76 @@ class DownloaderActivity : Activity() {
 
     // ------------------------------------------------------------------ list
 
-    private fun renderList() {
-        val display: List<Pair<String, String>> = when (mode) {
-            Mode.BROWSE -> browseRows.map { row ->
-                if (row.isDir) {
-                    "📁 ${row.name}" to "文件夹"
-                } else {
-                    (row.title.ifEmpty { row.name }) to row.subtitle()
-                }
-            }
-            Mode.SEARCH -> searchResults.map { s ->
-                s.title to listOf(s.artist, s.album, formatDuration(s.durationMs))
-                    .filter { it.isNotEmpty() }
-                    .joinToString(" · ")
+    private data class DisplayRow(val key: String, val title: String, val subtitle: String, val isSong: Boolean)
+
+    private fun currentDisplay(): List<DisplayRow> = when (mode) {
+        Mode.BROWSE -> browseRows.map { row ->
+            if (row.isDir) {
+                DisplayRow(row.docId, "📁 ${row.name}", "文件夹", false)
+            } else {
+                DisplayRow(row.docId, row.title.ifEmpty { row.name }, row.subtitle(), true)
             }
         }
-        downloadAllButton.visibility =
-            if ((if (mode == Mode.BROWSE) browseRows.any { !it.isDir } else searchResults.isNotEmpty())) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
-        downloadAllButton.text =
-            if (mode == Mode.SEARCH) getString(R.string.download_all_results) else getString(R.string.download_all)
+        Mode.SEARCH -> searchResults.map { s ->
+            DisplayRow(
+                "s${s.songId}",
+                s.title,
+                listOf(s.artist, s.album, formatDuration(s.durationMs))
+                    .filter { it.isNotEmpty() }
+                    .joinToString(" · "),
+                true,
+            )
+        }
+    }
+
+    private fun renderList() {
+        val display = currentDisplay()
+        downloadAllButton.visibility = if (display.any { it.isSong }) View.VISIBLE else View.GONE
+        updateDownloadAllLabel()
         listView.adapter = object : BaseAdapter() {
             override fun getCount(): Int = display.size
             override fun getItem(position: Int): Any = display[position]
             override fun getItemId(position: Int): Long = position.toLong()
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = convertView ?: layoutInflater.inflate(R.layout.item_doc, parent, false)
-                view.findViewById<TextView>(R.id.item_title).text = display[position].first
-                view.findViewById<TextView>(R.id.item_subtitle).text = display[position].second
+                val row = display[position]
+                view.findViewById<TextView>(R.id.item_title).text = row.title
+                view.findViewById<TextView>(R.id.item_subtitle).text = row.subtitle
+                val check = view.findViewById<android.widget.CheckBox>(R.id.item_check)
+                check.visibility = if (row.isSong) View.VISIBLE else View.GONE
+                // Reset the listener before state to avoid recycled-view feedback loops.
+                check.setOnCheckedChangeListener(null)
+                check.isChecked = selectedKeys.contains(row.key)
+                check.setOnCheckedChangeListener { _, isChecked ->
+                    if (isChecked) selectedKeys.add(row.key) else selectedKeys.remove(row.key)
+                    updateDownloadAllLabel()
+                }
                 return view
             }
         }
     }
 
+    private fun updateDownloadAllLabel() {
+        downloadAllButton.text = if (selectedKeys.isNotEmpty()) {
+            getString(R.string.download_selected, selectedKeys.size)
+        } else if (mode == Mode.SEARCH) {
+            getString(R.string.download_all_results)
+        } else {
+            getString(R.string.download_all)
+        }
+    }
+
+    private fun toggleSelection(key: String) {
+        if (!selectedKeys.add(key)) selectedKeys.remove(key)
+        renderList()
+    }
+
     private fun DocRow.subtitle(): String = buildString {
         if (artist.isNotEmpty()) append(artist)
+        if (album.isNotEmpty()) {
+            if (isNotEmpty()) append(" · ")
+            append(album)
+        }
         if (durationMs > 0) {
             if (isNotEmpty()) append(" · ")
             append(formatDuration(durationMs))
@@ -354,25 +399,44 @@ class DownloaderActivity : Activity() {
 
     private fun onRowTapped(position: Int) {
         if (downloading) return
+        val display = currentDisplay()
+        val row = display.getOrNull(position) ?: return
+        if (mode == Mode.BROWSE && !row.isSong) {
+            val docRow = browseRows.getOrNull(position)
+            if (docRow != null && docRow.isDir) {
+                navStack.addLast(docRow.docId to docRow.name)
+                selectedKeys.clear()
+                refreshBrowse()
+            }
+            return
+        }
+        // With a selection active, tapping a song toggles it (bulk-pick flow).
+        if (selectedKeys.isNotEmpty()) {
+            toggleSelection(row.key)
+            return
+        }
         when (mode) {
-            Mode.BROWSE -> {
-                val row = browseRows.getOrNull(position) ?: return
-                if (row.isDir) {
-                    navStack.addLast(row.docId to row.name)
-                    refreshBrowse()
-                } else {
-                    enqueue(listOf(row))
-                }
-            }
-            Mode.SEARCH -> {
-                val song = searchResults.getOrNull(position) ?: return
-                enqueueSearch(listOf(song))
-            }
+            Mode.BROWSE -> browseRows.getOrNull(position)?.let { enqueue(listOf(it)) }
+            Mode.SEARCH -> searchResults.getOrNull(position)?.let { enqueueSearch(listOf(it)) }
         }
     }
 
     private fun downloadAllVisible() {
         if (downloading) return
+        if (selectedKeys.isNotEmpty()) {
+            val keys = selectedKeys.toSet()
+            when (mode) {
+                Mode.BROWSE -> {
+                    if (Build.VERSION.SDK_INT < 29 && !hasLegacyStorage()) {
+                        requestPermissions(arrayOf(LEGACY_WRITE), REQUEST_LEGACY_STORAGE)
+                        return
+                    }
+                    enqueue(browseRows.filter { keys.contains(it.docId) })
+                }
+                Mode.SEARCH -> enqueueSearch(searchResults.filter { keys.contains("s${it.songId}") })
+            }
+            return
+        }
         when (mode) {
             Mode.BROWSE -> {
                 val songs = browseRows.filter { !it.isDir }
@@ -455,27 +519,108 @@ class DownloaderActivity : Activity() {
         val url = bundle?.getString(COLUMN_URL)?.takeIf { it.startsWith("http") }
         if (url != null) {
             try {
-                return downloadFromCdn(song, url, bundle.getString(COLUMN_HEADERS))
+                val cdn = downloadFromCdn(song, url, bundle.getString(COLUMN_HEADERS))
+                tagAndPublish(song, cdn)
+                return cdn.size
             } catch (t: Throwable) {
                 Log.w(TAG, "direct download failed for ${song.name}", t)
             }
         }
         // Proxy-fd fallback (one Range request per 64 KB - slow, but always works).
         val ext = sniffViaProxy(docUri)
-        val filename = sanitize("${song.artist.ifEmpty { "Unknown" }} - ${song.title.ifEmpty { song.name }}") + ext
-        return if (Build.VERSION.SDK_INT >= 29) {
-            saveViaMediaStore(docUri, filename, song, ext)
-        } else {
-            saveToPublicDir(docUri, filename)
+        val cache = newCacheFile()
+        try {
+            openStream(docUri).use { input ->
+                FileOutputStream(cache).use { out -> copyStream(input, out, -1) }
+            }
+            tagAndPublish(song, CdnResult(cache, ext, cache.length(), ""))
+            return cache.length()
+        } finally {
+            cache.delete()
         }
     }
 
+    private data class CdnResult(val cache: File, val ext: String, val size: Long, val filename: String)
+
     /**
-     * Single- or multi-connection download straight from the CDN. NetEase's CDN caps
-     * per-connection bandwidth, so files above [MIN_SEG_FILE] are fetched with parallel
-     * Range requests (IDM/aria2 style) into a preallocated cache file, then published.
+     * Embeds title/artist/album/lyrics/cover into the downloaded file, then publishes it into
+     * Music/NeteaseDownload. Best-effort: a failed tag never fails the download.
      */
-    private fun downloadFromCdn(song: DocRow, url: String, headers: String?): Long {
+    private fun tagAndPublish(song: DocRow, cdn: CdnResult) {
+        mainHandler.post { statusView.text = getString(R.string.status_tagging) }
+        try {
+            val songId = song.songId
+            if (songId != null) {
+                val audioFile = org.jaudiotagger.audio.AudioFileIO.read(cdn.cache)
+                val tag = audioFile.tagOrCreateDefault
+                tag.setField(org.jaudiotagger.tag.FieldKey.TITLE, song.title.ifEmpty { song.name })
+                tag.setField(org.jaudiotagger.tag.FieldKey.ARTIST, song.artist.ifEmpty { "Unknown Artist" })
+                if (song.album.isNotEmpty()) {
+                    tag.setField(org.jaudiotagger.tag.FieldKey.ALBUM, song.album)
+                }
+                try {
+                    api.songLyric(songId)?.let { tag.setField(org.jaudiotagger.tag.FieldKey.LYRICS, it) }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "lyrics tag failed", t)
+                }
+                try {
+                    val coverUrl = song.coverUrl.ifEmpty { api.coverUrlFor(songId) }
+                    val bytes = coverUrl?.let { fetchBytes(it) }
+                    if (bytes != null && bytes.size > 1024) {
+                        val art = org.jaudiotagger.tag.images.AndroidArtwork()
+                        art.binaryData = bytes
+                        art.mimeType =
+                            if (bytes.size > 3 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'N'.code.toByte() && bytes[2] == 'G'.code.toByte()) {
+                                "image/png"
+                            } else {
+                                "image/jpeg"
+                            }
+                        art.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                        try {
+                            tag.deleteArtworkField()
+                        } catch (_: Exception) {
+                        }
+                        tag.setField(art)
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "cover tag failed", t)
+                }
+                audioFile.commit()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "tagging failed", t)
+        }
+        cdn.cache.inputStream().use { input ->
+            if (Build.VERSION.SDK_INT >= 29) {
+                saveViaMediaStoreDirect(cdn.filename, song, cdn.ext, input, cdn.size)
+            } else {
+                saveToPublicDirDirect(cdn.filename, input)
+            }
+        }
+    }
+
+    private fun fetchBytes(url: String): ByteArray? {
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        return try {
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 20_000
+            if (conn.responseCode in 200..299) conn.inputStream.use { it.readBytes() } else null
+        } catch (t: Throwable) {
+            Log.w(TAG, "fetch bytes failed $url", t)
+            null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun newCacheFile(): File = File(cacheDir, "ndl_${System.currentTimeMillis()}")
+
+    /**
+     * Single- or multi-connection download of the raw bytes into a cache file. NetEase's CDN
+     * caps per-connection bandwidth, so files above [MIN_SEG_FILE] are fetched with parallel
+     * Range requests (IDM/aria2 style). Tagging + publishing happen in [tagAndPublish].
+     */
+    private fun downloadFromCdn(song: DocRow, url: String, headers: String?): CdnResult {
         val probe = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         val ext: String
         val size: Long
@@ -507,24 +652,23 @@ class DownloaderActivity : Activity() {
         }
 
         val filename = sanitize("${song.artist.ifEmpty { "Unknown" }} - ${song.title.ifEmpty { song.name }}") + ext
-        if (size in 1 until MIN_SEG_FILE) {
-            return downloadSingle(url, headers, filename, song, ext, size)
+        val cache = newCacheFile()
+        try {
+            if (size in 1 until MIN_SEG_FILE) {
+                singleInto(cache, url, headers)
+            } else if (!segmentInto(cache, url, headers, size)) {
+                singleInto(cache, url, headers)
+            }
+            return CdnResult(cache, ext, if (size > 0) size else cache.length(), filename)
+        } catch (t: Throwable) {
+            cache.delete()
+            throw t
         }
-        downloadSegmented(url, headers, size, filename, song, ext)?.let { return it }
-        return downloadSingle(url, headers, filename, song, ext, -1)
     }
 
-    /** Multi-connection Range download into a preallocated cache file, then publish. */
-    private fun downloadSegmented(
-        url: String,
-        headers: String?,
-        size: Long,
-        filename: String,
-        song: DocRow,
-        ext: String,
-    ): Long? {
+    /** Multi-connection Range download into a preallocated cache file. */
+    private fun segmentInto(cache: File, url: String, headers: String?, size: Long): Boolean {
         val segments = (size / SEGMENT_TARGET).toInt().coerceIn(2, threadsPref())
-        val cache = File(cacheDir, "ndl_${System.currentTimeMillis()}")
         try {
             RandomAccessFile(cache, "rw").use { it.setLength(size) }
             val done = java.util.concurrent.atomic.AtomicLong()
@@ -583,30 +727,17 @@ class DownloaderActivity : Activity() {
             mainHandler.removeCallbacks(ticker)
             if (failed.get() || done.get() != size) {
                 Log.w(TAG, "segmented download incomplete done=$done size=$size")
-                return null
+                return false
             }
-            cache.inputStream().use { input ->
-                if (Build.VERSION.SDK_INT >= 29) {
-                    saveViaMediaStoreDirect(filename, song, ext, input, size)
-                } else {
-                    saveToPublicDirDirect(filename, input)
-                }
-            }
-            return size
-        } finally {
-            cache.delete()
+            return true
+        } catch (t: Throwable) {
+            Log.w(TAG, "segmented download error", t)
+            return false
         }
     }
 
-    /** Small files / segment-failure fallback: one plain GET. */
-    private fun downloadSingle(
-        url: String,
-        headers: String?,
-        filename: String,
-        song: DocRow,
-        ext: String,
-        contentLength: Long,
-    ): Long {
+    /** Small files / segment-failure fallback: one plain GET into the cache file. */
+    private fun singleInto(cache: File, url: String, headers: String?): Long {
         val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         try {
             conn.connectTimeout = 10_000
@@ -616,10 +747,18 @@ class DownloaderActivity : Activity() {
             conn.connect()
             val code = conn.responseCode
             if (code < 200 || code >= 300) throw java.io.IOException("直链 HTTP $code")
-            return if (Build.VERSION.SDK_INT >= 29) {
-                saveViaMediaStoreDirect(filename, song, ext, conn.inputStream, contentLength)
-            } else {
-                saveToPublicDirDirect(filename, conn.inputStream)
+            conn.inputStream.use { input ->
+                RandomAccessFile(cache, "rw").use { raf ->
+                    val buffer = ByteArray(COPY_BUFFER)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        raf.write(buffer, 0, read)
+                        total += read
+                    }
+                    return total
+                }
             }
         } finally {
             conn.disconnect()

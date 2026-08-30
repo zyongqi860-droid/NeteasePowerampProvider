@@ -11,8 +11,8 @@ android {
         applicationId = "com.yczz.neteasepoweramp.downloader"
         minSdk = 21
         targetSdk = 35
-        versionCode = 5
-        versionName = "2.1.0-ui"
+        versionCode = 6
+        versionName = "2.2.0-tags-multiselect"
     }
 
     compileOptions {
@@ -29,4 +29,6 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
     implementation(libs.okhttp)
+    // Writes ID3 (mp3) / Vorbis (flac) tags so downloaded files carry lyrics + cover art.
+    implementation("net.jthink:jaudiotagger:3.0.1")
 }

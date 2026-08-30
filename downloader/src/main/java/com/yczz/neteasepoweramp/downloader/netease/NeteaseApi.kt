@@ -93,6 +93,7 @@ class NeteaseApi(context: Context) {
         val artist: String,
         val album: String,
         val durationMs: Long,
+        val coverUrl: String = "",
     )
 
     /** @return songs in NetEase relevance order (most popular first). */
@@ -140,11 +141,38 @@ class NeteaseApi(context: Context) {
                     }
                 }
             }.ifEmpty { "Unknown Artist" }
-            val album = item.optJSONObject("al")?.optString("name").orEmpty().trim()
+            val albumObj = item.optJSONObject("al")
+            val album = albumObj?.optString("name").orEmpty().trim()
+            val coverUrl = albumObj?.optString("picUrl").orEmpty().trim()
             val duration = item.optLong("dt", 0L).let { if (it > 0) it else item.optLong("duration", 0L) }
-            out.add(SongResult(id, title, artist, album, duration))
+            out.add(SongResult(id, title, artist, album, duration, coverUrl))
         }
         return out
+    }
+
+    /** Plain LRC lyrics for a song, or null when none / not accessible. */
+    fun songLyric(songId: Long): String? {
+        val (code, body) = get("$BASE/song/lyric?id=$songId&lv=1&tv=-1", withCookie = true)
+        if (code != 200) return null
+        val lyric = try {
+            JSONObject(body).optJSONObject("lrc")?.optString("lyric").orEmpty()
+        } catch (_: Exception) {
+            return null
+        }
+        return lyric.trim().takeIf { it.isNotEmpty() }
+    }
+
+    /** Best-effort album cover url for a song id (search results usually carry one already). */
+    fun coverUrlFor(songId: Long): String? {
+        val (code, body) = get("$BASE/song/detail?ids=%5B$songId%5D", withCookie = true)
+        if (code != 200) return null
+        return try {
+            val root = JSONObject(body)
+            val song = root.optJSONArray("songs")?.optJSONObject(0) ?: return null
+            song.optJSONObject("al")?.optString("picUrl").orEmpty().trim().ifEmpty { null }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     // ------------------------------------------------------------------ account
