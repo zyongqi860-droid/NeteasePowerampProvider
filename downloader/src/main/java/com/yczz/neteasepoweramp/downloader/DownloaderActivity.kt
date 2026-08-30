@@ -19,9 +19,11 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import com.yczz.neteasepoweramp.downloader.netease.NeteaseApi
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -36,38 +38,55 @@ private data class DocRow(
 )
 
 /**
- * Standalone SAF client for the NeteasePoweramp provider - the same access model Poweramp
- * uses: pick the provider root once (persisted tree grant), then browse the document tree
- * and download songs into the public Music/NeteaseDownload folder. Downloads stream straight
- * from the provider (Range GETs on NetEase's CDN happen inside the provider process).
+ * Standalone NetEase downloader: login (QR / cookie), keyword search, multi-threaded CDN
+ * download - all inside this app, independent from the Poweramp provider. A browse mode
+ * additionally exposes the provider's document tree over SAF for provider-curated libraries.
  */
 class DownloaderActivity : Activity() {
 
+    private enum class Mode { SEARCH, BROWSE }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val prefs: SharedPreferences by lazy { getSharedPreferences("downloader", MODE_PRIVATE) }
+    private val api: NeteaseApi by lazy { NeteaseApi(this) }
 
+    private lateinit var accountView: TextView
     private lateinit var pathView: TextView
     private lateinit var statusView: TextView
     private lateinit var pickButton: Button
     private lateinit var downloadAllButton: Button
+    private lateinit var loginButton: Button
+    private lateinit var modeButton: Button
+    private lateinit var searchBar: View
+    private lateinit var searchInput: EditText
     private lateinit var listView: ListView
 
+    private var mode = Mode.SEARCH
     private var treeUri: Uri? = null
-    private val navStack = ArrayDeque<Pair<String, String>>() // docId to display name
-    private var rows: List<DocRow> = emptyList()
+    private val navStack = ArrayDeque<Pair<String, String>>()
+    private var browseRows: List<DocRow> = emptyList()
+    private var searchResults: List<NeteaseApi.SongResult> = emptyList()
 
     private var downloading = false
-    private var lastError: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_downloader)
+        accountView = findViewById(R.id.account_view)
         pathView = findViewById(R.id.path_view)
         statusView = findViewById(R.id.status_view)
         pickButton = findViewById(R.id.btn_pick)
         downloadAllButton = findViewById(R.id.btn_download_all)
+        loginButton = findViewById(R.id.btn_login)
+        modeButton = findViewById(R.id.btn_mode)
+        searchBar = findViewById(R.id.search_bar)
+        searchInput = findViewById(R.id.search_input)
         listView = findViewById(R.id.doc_list)
 
+        loginButton.setOnClickListener { startActivity(Intent(this, LoginActivity::class.java)) }
+        modeButton.setOnClickListener { setMode(if (mode == Mode.SEARCH) Mode.BROWSE else Mode.SEARCH) }
+        findViewById<Button>(R.id.btn_search).setOnClickListener { runSearch() }
+        searchInput.setOnEditorActionListener { _, _, _ -> runSearch(); true }
         pickButton.setOnClickListener {
             @Suppress("DEPRECATION")
             startActivityForResult(
@@ -79,16 +98,101 @@ class DownloaderActivity : Activity() {
                 REQUEST_PICK_TREE,
             )
         }
-        downloadAllButton.setOnClickListener { enqueueAll() }
-        listView.setOnItemClickListener { _, _, position, _ -> onRowTapped(rows[position]) }
+        downloadAllButton.setOnClickListener { downloadAllVisible() }
+        listView.setOnItemClickListener { _, _, position, _ -> onRowTapped(position) }
 
-        restoreTree()
+        setMode(Mode.SEARCH)
     }
 
+    override fun onResume() {
+        super.onResume()
+        refreshAccount()
+    }
+
+    private fun refreshAccount() {
+        accountView.text = getString(R.string.account_anonymous)
+        Thread {
+            val account = try {
+                api.verifyAccount()
+            } catch (t: Throwable) {
+                null
+            }
+            mainHandler.post {
+                accountView.text = when {
+                    account != null -> getString(R.string.account_ok, account.nickname, account.vipLabel)
+                    api.musicU != null -> getString(R.string.account_expired)
+                    else -> getString(R.string.account_anonymous)
+                }
+            }
+        }.start()
+    }
+
+    private fun setMode(newMode: Mode) {
+        mode = newMode
+        if (mode == Mode.BROWSE) {
+            searchBar.visibility = View.GONE
+            modeButton.text = getString(R.string.btn_mode_browse)
+            val saved = prefs.getString(KEY_TREE, null)
+            if (saved != null && navStack.isEmpty()) {
+                treeUri = Uri.parse(saved)
+                navStack.add(DocumentsContract.getTreeDocumentId(treeUri) to "Netease Poweramp")
+            }
+            if (treeUri == null) showPickState() else refreshBrowse()
+        } else {
+            searchBar.visibility = View.VISIBLE
+            modeButton.text = getString(R.string.btn_mode_search)
+            statusView.text = getString(R.string.target_dir)
+            pathView.text = getString(R.string.app_name)
+            pickButton.visibility = View.GONE
+            renderList()
+        }
+    }
+
+    // ------------------------------------------------------------------ search mode
+
+    private fun runSearch(): Boolean {
+        val keyword = searchInput.text?.toString()?.trim().orEmpty()
+        if (keyword.isEmpty()) return true
+        statusView.text = getString(R.string.search_running)
+        Thread {
+            val results = try {
+                api.search(keyword, 30)
+            } catch (t: Throwable) {
+                Log.w(TAG, "search failed", t)
+                mainHandler.post { statusView.text = getString(R.string.status_failed, t.message ?: "") }
+                null
+            }
+            if (results != null) {
+                searchResults = results
+                mainHandler.post {
+                    statusView.text = getString(R.string.search_done, results.size)
+                    renderList()
+                }
+            }
+        }.start()
+        return true
+    }
+
+    private fun downloadSearchOne(song: NeteaseApi.SongResult) {
+        val resolved = api.resolveSongUrl(song.songId)
+            ?: throw IllegalStateException("无法解析播放地址（VIP 歌曲请先登录）")
+        val docRow = DocRow(
+            docId = "song_${song.songId}",
+            name = song.title,
+            isDir = false,
+            title = song.title,
+            artist = song.artist,
+            durationMs = song.durationMs,
+        )
+        downloadFromCdn(docRow, resolved.url, null)
+    }
+
+    // ------------------------------------------------------------------ browse mode (SAF)
+
     override fun onBackPressed() {
-        if (navStack.size > 1) {
+        if (mode == Mode.BROWSE && navStack.size > 1) {
             navStack.removeLast()
-            refresh()
+            refreshBrowse()
         } else {
             super.onBackPressed()
         }
@@ -99,10 +203,7 @@ class DownloaderActivity : Activity() {
         if (requestCode == REQUEST_PICK_TREE && resultCode == RESULT_OK && data?.data != null) {
             val uri = data.data!!
             try {
-                contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } catch (e: SecurityException) {
                 Log.w(TAG, "persistable grant missing", e)
             }
@@ -110,7 +211,7 @@ class DownloaderActivity : Activity() {
             treeUri = uri
             navStack.clear()
             navStack.add(DocumentsContract.getTreeDocumentId(uri) to "Netease Poweramp")
-            refresh()
+            refreshBrowse()
         }
     }
 
@@ -119,22 +220,8 @@ class DownloaderActivity : Activity() {
         if (requestCode == REQUEST_LEGACY_STORAGE &&
             grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
         ) {
-            enqueueAll()
+            downloadAllVisible()
         }
-    }
-
-    // ------------------------------------------------------------------ browse
-
-    private fun restoreTree() {
-        val saved = prefs.getString(KEY_TREE, null)
-        if (saved == null) {
-            showPickState()
-            return
-        }
-        treeUri = Uri.parse(saved)
-        navStack.clear()
-        navStack.add(DocumentsContract.getTreeDocumentId(treeUri) to "Netease Poweramp")
-        refresh()
     }
 
     private fun showPickState() {
@@ -142,11 +229,11 @@ class DownloaderActivity : Activity() {
         downloadAllButton.visibility = View.GONE
         pathView.text = getString(R.string.app_name)
         statusView.text = getString(R.string.pick_hint)
-        rows = emptyList()
-        listView.adapter = simpleAdapter(emptyList())
+        browseRows = emptyList()
+        renderList()
     }
 
-    private fun refresh() {
+    private fun refreshBrowse() {
         val tree = treeUri ?: return
         pickButton.visibility = View.GONE
         val current = navStack.last()
@@ -158,7 +245,6 @@ class DownloaderActivity : Activity() {
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                DocumentsContract.Document.COLUMN_SIZE,
                 android.provider.MediaStore.Audio.AudioColumns.DURATION,
                 android.provider.MediaStore.MediaColumns.TITLE,
                 android.provider.MediaStore.Audio.AudioColumns.ARTIST,
@@ -169,65 +255,104 @@ class DownloaderActivity : Activity() {
                     val docId = c.getString(0)
                     val isDir = c.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR
                     val name = c.getString(2) ?: docId
-                    val duration = if (c.isNull(4)) 0L else c.getLong(4)
-                    val title = c.getString(5).orEmpty()
-                    val artist = c.getString(6).orEmpty()
+                    val duration = if (c.isNull(3)) 0L else c.getLong(3)
+                    val title = c.getString(4).orEmpty()
+                    val artist = c.getString(5).orEmpty()
                     out.add(DocRow(docId, name, isDir, title, artist, duration))
                 }
             }
-            rows = out.sortedWith(compareBy({ !it.isDir }, { it.name }))
+            browseRows = out.sortedWith(compareBy({ !it.isDir }, { it.name }))
         } catch (e: Exception) {
             Log.w(TAG, "query children failed", e)
-            rows = emptyList()
+            browseRows = emptyList()
             statusView.text = "读取失败: ${e.message}"
         }
-        listView.adapter = simpleAdapter(rows)
-        downloadAllButton.visibility = if (rows.any { !it.isDir }) View.VISIBLE else View.GONE
-        if (rows.isEmpty()) statusView.text = getString(R.string.status_empty)
+        renderList()
+        if (browseRows.isEmpty()) statusView.text = getString(R.string.status_empty)
     }
 
-    private fun simpleAdapter(list: List<DocRow>): BaseAdapter = object : BaseAdapter() {
-        override fun getCount(): Int = list.size
-        override fun getItem(position: Int): DocRow = list[position]
-        override fun getItemId(position: Int): Long = position.toLong()
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val view = convertView ?: layoutInflater.inflate(R.layout.item_doc, parent, false)
-            val row = list[position]
-            view.findViewById<TextView>(R.id.item_title).text =
-                if (row.isDir) "📁 ${row.name}" else (row.title.ifEmpty { row.name })
-            val subtitle = when {
-                row.isDir -> "文件夹"
-                else -> buildString {
-                    if (row.artist.isNotEmpty()) append(row.artist)
-                    if (row.durationMs > 0) {
-                        if (isNotEmpty()) append(" · ")
-                        append("${row.durationMs / 60000}:${"%02d".format((row.durationMs / 1000) % 60)}")
-                    }
-                }.ifEmpty { row.name }
+    // ------------------------------------------------------------------ list
+
+    private fun renderList() {
+        val display: List<Pair<String, String>> = when (mode) {
+            Mode.BROWSE -> browseRows.map { row ->
+                if (row.isDir) {
+                    "📁 ${row.name}" to "文件夹"
+                } else {
+                    (row.title.ifEmpty { row.name }) to row.subtitle()
+                }
             }
-            view.findViewById<TextView>(R.id.item_subtitle).text = subtitle
-            return view
+            Mode.SEARCH -> searchResults.map { s ->
+                s.title to listOf(s.artist, s.album, formatDuration(s.durationMs))
+                    .filter { it.isNotEmpty() }
+                    .joinToString(" · ")
+            }
+        }
+        downloadAllButton.visibility =
+            if ((if (mode == Mode.BROWSE) browseRows.any { !it.isDir } else searchResults.isNotEmpty())) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+        downloadAllButton.text =
+            if (mode == Mode.SEARCH) getString(R.string.download_all_results) else getString(R.string.download_all)
+        listView.adapter = object : BaseAdapter() {
+            override fun getCount(): Int = display.size
+            override fun getItem(position: Int): Any = display[position]
+            override fun getItemId(position: Int): Long = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = convertView ?: layoutInflater.inflate(R.layout.item_doc, parent, false)
+                view.findViewById<TextView>(R.id.item_title).text = display[position].first
+                view.findViewById<TextView>(R.id.item_subtitle).text = display[position].second
+                return view
+            }
         }
     }
 
-    private fun onRowTapped(row: DocRow) {
-        if (row.isDir) {
-            navStack.addLast(row.docId to row.name)
-            refresh()
-            return
+    private fun DocRow.subtitle(): String = buildString {
+        if (artist.isNotEmpty()) append(artist)
+        if (durationMs > 0) {
+            if (isNotEmpty()) append(" · ")
+            append(formatDuration(durationMs))
         }
-        enqueue(listOf(row))
-    }
+    }.ifEmpty { name }
 
-    private fun enqueueAll() {
+    private fun formatDuration(ms: Long): String =
+        "${ms / 60000}:${"%02d".format((ms / 1000) % 60)}"
+
+    private fun onRowTapped(position: Int) {
         if (downloading) return
-        val songs = rows.filter { !it.isDir }
-        if (songs.isEmpty()) return
-        if (Build.VERSION.SDK_INT < 29 && !hasLegacyStorage()) {
-            requestPermissions(arrayOf(LEGACY_WRITE), REQUEST_LEGACY_STORAGE)
-            return
+        when (mode) {
+            Mode.BROWSE -> {
+                val row = browseRows.getOrNull(position) ?: return
+                if (row.isDir) {
+                    navStack.addLast(row.docId to row.name)
+                    refreshBrowse()
+                } else {
+                    enqueue(listOf(row))
+                }
+            }
+            Mode.SEARCH -> {
+                val song = searchResults.getOrNull(position) ?: return
+                enqueueSearch(listOf(song))
+            }
         }
-        enqueue(songs)
+    }
+
+    private fun downloadAllVisible() {
+        if (downloading) return
+        when (mode) {
+            Mode.BROWSE -> {
+                val songs = browseRows.filter { !it.isDir }
+                if (songs.isEmpty()) return
+                if (Build.VERSION.SDK_INT < 29 && !hasLegacyStorage()) {
+                    requestPermissions(arrayOf(LEGACY_WRITE), REQUEST_LEGACY_STORAGE)
+                    return
+                }
+                enqueue(songs)
+            }
+            Mode.SEARCH -> enqueueSearch(searchResults)
+        }
     }
 
     // ------------------------------------------------------------------ download queue
@@ -246,33 +371,64 @@ class DownloaderActivity : Activity() {
                     mainHandler.post { statusView.text = getString(R.string.status_saved, describe(song, written)) }
                 } catch (t: Throwable) {
                     fail++
-                    lastError = t.message ?: t.javaClass.simpleName
                     Log.w(TAG, "download failed ${song.name}", t)
-                    mainHandler.post { statusView.text = getString(R.string.status_failed, lastError) }
+                    mainHandler.post { statusView.text = getString(R.string.status_failed, t.message ?: "") }
                 }
             }
-            mainHandler.post {
-                downloading = false
-                downloadAllButton.isEnabled = true
-                Toast.makeText(this, getString(R.string.download_summary, ok, fail), Toast.LENGTH_LONG).show()
-            }
+            finishQueue(ok, fail)
         }.start()
     }
 
+    private fun enqueueSearch(songs: List<NeteaseApi.SongResult>) {
+        if (downloading || songs.isEmpty()) return
+        if (Build.VERSION.SDK_INT < 29 && !hasLegacyStorage()) {
+            requestPermissions(arrayOf(LEGACY_WRITE), REQUEST_LEGACY_STORAGE)
+            return
+        }
+        downloading = true
+        downloadAllButton.isEnabled = false
+        var ok = 0
+        var fail = 0
+        Thread {
+            for (song in songs) {
+                try {
+                    downloadSearchOne(song)
+                    ok++
+                    mainHandler.post { statusView.text = getString(R.string.status_saved, song.title) }
+                } catch (t: Throwable) {
+                    fail++
+                    Log.w(TAG, "search download failed ${song.title}", t)
+                    mainHandler.post { statusView.text = getString(R.string.status_failed, t.message ?: "") }
+                }
+            }
+            finishQueue(ok, fail)
+        }.start()
+    }
+
+    private fun finishQueue(ok: Int, fail: Int) {
+        mainHandler.post {
+            downloading = false
+            downloadAllButton.isEnabled = true
+            Toast.makeText(this, getString(R.string.download_summary, ok, fail), Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // ------------------------------------------------------------------ providers of bytes
+
+    /** Browse mode: resolve the CDN url via the provider (Poweramp's own playback call). */
     private fun downloadOne(song: DocRow): Long {
         val tree = treeUri ?: throw IllegalStateException("no tree selected")
         val docUri = DocumentsContract.buildDocumentUriUsingTree(tree, song.docId)
-        // Fast path: resolve the CDN URL once via the provider (same call Poweramp uses for
-        // playback) and stream the whole file with a single GET - full CDN speed. The proxy-fd
-        // path is only a fallback: it issues one HTTP Range request per 64 KB read, which is
-        // why downloads used to crawl.
-        try {
-            val bytes = downloadDirect(song, docUri)
-            if (bytes != null) return bytes
-            Log.w(TAG, "no direct url for ${song.name}, falling back to proxy fd")
-        } catch (t: Throwable) {
-            Log.w(TAG, "direct download failed for ${song.name}, falling back to proxy fd", t)
+        val bundle = contentResolver.call(tree, METHOD_GET_URL, docUri.toString(), null)
+        val url = bundle?.getString(COLUMN_URL)?.takeIf { it.startsWith("http") }
+        if (url != null) {
+            try {
+                return downloadFromCdn(song, url, bundle.getString(COLUMN_HEADERS))
+            } catch (t: Throwable) {
+                Log.w(TAG, "direct download failed for ${song.name}", t)
+            }
         }
+        // Proxy-fd fallback (one Range request per 64 KB - slow, but always works).
         val ext = sniffViaProxy(docUri)
         val filename = sanitize("${song.artist.ifEmpty { "Unknown" }} - ${song.title.ifEmpty { song.name }}") + ext
         return if (Build.VERSION.SDK_INT >= 29) {
@@ -282,27 +438,12 @@ class DownloaderActivity : Activity() {
         }
     }
 
-    /** Fallback sniffing through the provider's proxy fd (one small Range read). */
-    private fun sniffViaProxy(docUri: Uri): String {
-        openStream(docUri).use { input -> return sniff(input) }
-    }
-
     /**
-     * Single-connection download straight from the CDN. Returns null when the provider has no
-     * url for this song; throws on network/HTTP errors so the caller can fall back.
-     *
-     * NetEase's CDN caps per-connection bandwidth, so files above [MIN_SEG_FILE] are fetched
-     * with [MAX_SEGMENTS] parallel Range requests into a preallocated cache file (IDM/aria2
-     * style), then published into the media store with one fast local copy.
+     * Single- or multi-connection download straight from the CDN. NetEase's CDN caps
+     * per-connection bandwidth, so files above [MIN_SEG_FILE] are fetched with parallel
+     * Range requests (IDM/aria2 style) into a preallocated cache file, then published.
      */
-    private fun downloadDirect(song: DocRow, docUri: Uri): Long? {
-        val tree = treeUri ?: return null
-        val bundle = contentResolver.call(tree, METHOD_GET_URL, docUri.toString(), null)
-        val url = bundle?.getString(COLUMN_URL)?.takeIf { it.startsWith("http") } ?: return null
-        val headers = bundle.getString(COLUMN_HEADERS)
-        Log.i(TAG, "direct download via ${Uri.parse(url).host}")
-
-        // Probe: response code, total size, content type + first bytes for the extension.
+    private fun downloadFromCdn(song: DocRow, url: String, headers: String?): Long {
         val probe = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         val ext: String
         val size: Long
@@ -338,7 +479,6 @@ class DownloaderActivity : Activity() {
             return downloadSingle(url, headers, filename, song, ext, size)
         }
         downloadSegmented(url, headers, size, filename, song, ext)?.let { return it }
-        // Segments failed (server ignored Range etc.) - still better than the proxy fd.
         return downloadSingle(url, headers, filename, song, ext, -1)
     }
 
@@ -444,11 +584,10 @@ class DownloaderActivity : Activity() {
             conn.connect()
             val code = conn.responseCode
             if (code < 200 || code >= 300) throw java.io.IOException("直链 HTTP $code")
-            val input = conn.inputStream
             return if (Build.VERSION.SDK_INT >= 29) {
-                saveViaMediaStoreDirect(filename, song, ext, input, contentLength)
+                saveViaMediaStoreDirect(filename, song, ext, conn.inputStream, contentLength)
             } else {
-                saveToPublicDirDirect(filename, input)
+                saveToPublicDirDirect(filename, conn.inputStream)
             }
         } finally {
             conn.disconnect()
@@ -470,65 +609,26 @@ class DownloaderActivity : Activity() {
         head.size >= 4 && head[0] == 'f'.code.toByte() && head[1] == 'L'.code.toByte() &&
             head[2] == 'a'.code.toByte() && head[3] == 'C'.code.toByte()
 
-    /** Reads the stream head to detect FLAC vs MP3. */
-    private fun sniff(input: java.io.InputStream): String {
-        val head = ByteArray(4)
-        var total = 0
-        while (total < head.size) {
-            val read = input.read(head, total, head.size - total)
-            if (read < 0) break
-            total += read
-        }
-        if (total >= 4 && head[0] == 'f'.code.toByte() && head[1] == 'L'.code.toByte() &&
-            head[2] == 'a'.code.toByte() && head[3] == 'C'.code.toByte()
-        ) {
-            return ".flac"
-        }
-        return ".mp3"
+    // ------------------------------------------------------------------ sinks
+
+    private fun mediaValues(filename: String, ext: String, song: DocRow) = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+        put(MediaStore.MediaColumns.MIME_TYPE, if (ext == ".flac") "audio/flac" else "audio/mpeg")
+        put(MediaStore.MediaColumns.RELATIVE_PATH, "Music/NeteaseDownload")
+        put(MediaStore.Audio.Media.TITLE, song.title.ifEmpty { song.name.removeSuffix(".mp3") })
+        put(MediaStore.Audio.Media.ARTIST, song.artist.ifEmpty { "Unknown Artist" })
+        put(MediaStore.MediaColumns.IS_PENDING, 1)
     }
 
-    private fun openStream(docUri: Uri) =
-        contentResolver.openInputStream(docUri) ?: throw IllegalStateException("无法打开歌曲流")
-
-    private fun copyWithProgress(docUri: Uri, out: java.io.OutputStream): Long {
-        openStream(docUri).use { input ->
-            val buffer = ByteArray(COPY_BUFFER)
-            var total = 0L
-            var lastReport = 0L
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                out.write(buffer, 0, read)
-                total += read
-                if (total - lastReport > PROGRESS_STEP) {
-                    lastReport = total
-                    val sofar = total
-                    mainHandler.post { statusView.text = getString(R.string.status_downloading, mb(sofar)) }
-                }
-            }
-            return total
-        }
-    }
-
-    /** Proxy-fd path (fallback): MediaStore (API 29+), lands in Music/NeteaseDownload. */
     private fun saveViaMediaStore(docUri: Uri, filename: String, song: DocRow, ext: String): Long {
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
-            put(MediaStore.MediaColumns.MIME_TYPE, if (ext == ".flac") "audio/flac" else "audio/mpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Music/NeteaseDownload")
-            put(MediaStore.Audio.Media.TITLE, song.title.ifEmpty { song.name.removeSuffix(".mp3") })
-            put(MediaStore.Audio.Media.ARTIST, song.artist.ifEmpty { "Unknown Artist" })
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
         val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val target = contentResolver.insert(collection, values)
+        val target = contentResolver.insert(collection, mediaValues(filename, ext, song))
             ?: throw IllegalStateException("MediaStore insert failed")
         val written = contentResolver.openOutputStream(target)!!.use { out -> copyWithProgress(docUri, out) }
         contentResolver.update(target, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
         return written
     }
 
-    /** Direct-CDN path (fast): single GET streamed straight into MediaStore. */
     private fun saveViaMediaStoreDirect(
         filename: String,
         song: DocRow,
@@ -536,45 +636,39 @@ class DownloaderActivity : Activity() {
         input: java.io.InputStream,
         contentLength: Long,
     ): Long {
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
-            put(MediaStore.MediaColumns.MIME_TYPE, if (ext == ".flac") "audio/flac" else "audio/mpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Music/NeteaseDownload")
-            put(MediaStore.Audio.Media.TITLE, song.title.ifEmpty { song.name.removeSuffix(".mp3") })
-            put(MediaStore.Audio.Media.ARTIST, song.artist.ifEmpty { "Unknown Artist" })
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
         val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val target = contentResolver.insert(collection, values)
+        val target = contentResolver.insert(collection, mediaValues(filename, ext, song))
             ?: throw IllegalStateException("MediaStore insert failed")
         val written = contentResolver.openOutputStream(target)!!.use { out -> copyStream(input, out, contentLength) }
         contentResolver.update(target, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
         return written
     }
 
-    /** Proxy-fd path (fallback): public Music dir for Android 9 and below + media scan. */
     private fun saveToPublicDir(docUri: Uri, filename: String): Long {
-        @Suppress("DEPRECATION")
-        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "NeteaseDownload")
-        dir.mkdirs()
-        val target = File(dir, filename)
+        val target = publicFile(filename)
         val written = FileOutputStream(target).use { out -> copyWithProgress(docUri, out) }
         MediaScannerConnection.scanFile(this, arrayOf(target.absolutePath), null, null)
         return written
     }
 
-    /** Direct-CDN path (fast) for legacy devices. */
     private fun saveToPublicDirDirect(filename: String, input: java.io.InputStream): Long {
-        @Suppress("DEPRECATION")
-        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "NeteaseDownload")
-        dir.mkdirs()
-        val target = File(dir, filename)
+        val target = publicFile(filename)
         val written = FileOutputStream(target).use { out -> copyStream(input, out, -1) }
         MediaScannerConnection.scanFile(this, arrayOf(target.absolutePath), null, null)
         return written
     }
 
-    /** Straight pipe for the direct-CDN path (contentLength from Content-Length when known). */
+    private fun publicFile(filename: String): File {
+        @Suppress("DEPRECATION")
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "NeteaseDownload")
+        dir.mkdirs()
+        return File(dir, filename)
+    }
+
+    private fun copyWithProgress(docUri: Uri, out: java.io.OutputStream): Long {
+        openStream(docUri).use { input -> return copyStream(input, out, -1) }
+    }
+
     private fun copyStream(input: java.io.InputStream, out: java.io.OutputStream, contentLength: Long): Long {
         val buffer = ByteArray(COPY_BUFFER)
         var total = 0L
@@ -592,6 +686,22 @@ class DownloaderActivity : Activity() {
             }
         }
         return total
+    }
+
+    private fun openStream(docUri: Uri) =
+        contentResolver.openInputStream(docUri) ?: throw IllegalStateException("无法打开歌曲流")
+
+    private fun sniffViaProxy(docUri: Uri): String {
+        openStream(docUri).use { input ->
+            val head = ByteArray(4)
+            var total = 0
+            while (total < head.size) {
+                val read = input.read(head, total, head.size - total)
+                if (read < 0) break
+                total += read
+            }
+            return if (flacMagic(head)) ".flac" else ".mp3"
+        }
     }
 
     // ------------------------------------------------------------------ helpers

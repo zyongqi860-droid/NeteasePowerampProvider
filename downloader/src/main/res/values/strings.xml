@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 	<string name="app_name">网易云下载器</string>
+	<string name="login_title">网易云登录</string>
 	<string name="pick_root">选择网易云曲库</string>
 	<string name="pick_hint">像 Poweramp 一样连接数据源：点击下方按钮，在系统选择器里选择「Netease Poweramp」。</string>
 	<string name="download_all">下载本页全部歌曲</string>
@@ -10,4 +11,30 @@
 	<string name="status_empty">此文件夹没有歌曲</string>
 	<string name="target_dir">保存到 Music/NeteaseDownload</string>
 	<string name="download_summary">下载完成:成功 %1$d，失败 %2$d</string>
+
+	<string name="account_anonymous">未登录 · 免费歌可完整下载，VIP 歌仅试听段</string>
+	<string name="account_ok">已登录:%1$s(%2$s)</string>
+	<string name="account_expired">登录已过期，请重新登录</string>
+	<string name="btn_login">登录</string>
+	<string name="btn_mode_search">搜索模式</string>
+	<string name="btn_mode_browse">浏览模式</string>
+	<string name="search_hint">搜索网易云歌曲/歌手…</string>
+	<string name="btn_search">搜索</string>
+	<string name="search_running">正在搜索网易云…</string>
+	<string name="search_done">找到 %1$d 首，点一首即下载</string>
+	<string name="download_all_results">下载全部搜索结果</string>
+
+	<string name="login_web_loading">正在打开网易云登录页…（页面里可扫码/短信/密码登录，登录成功自动返回）</string>
+	<string name="login_paste_cookie">粘贴 Cookie 备用</string>
+	<string name="login_cookie_title">粘贴 Cookie（备用）</string>
+	<string name="login_cookie_hint">粘贴 MUSIC_U 值或整段 Cookie</string>
+	<string name="login_cookie_save">保存并验证</string>
+	<string name="login_cookie_saved">Cookie 已保存</string>
+	<string name="login_cookie_invalid">没有识别到 MUSIC_U，请检查粘贴内容</string>
+	<string name="login_logged_out">已退出登录</string>
+	<string name="login_logout">退出登录</string>
+	<string name="login_checking">正在检查登录状态…</string>
+	<string name="login_ok">已登录:%1$s(%2$s)</string>
+	<string name="login_anonymous">当前匿名（VIP 歌只有 30 秒试听）</string>
+	<string name="login_expired">Cookie 已失效，请重新登录</string>
 </resources>
