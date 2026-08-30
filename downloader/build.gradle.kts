@@ -11,8 +11,8 @@ android {
         applicationId = "com.yczz.neteasepoweramp.downloader"
         minSdk = 21
         targetSdk = 35
-        versionCode = 6
-        versionName = "2.2.0-tags-multiselect"
+        versionCode = 7
+        versionName = "2.2.1-tagfix"
     }
 
     compileOptions {

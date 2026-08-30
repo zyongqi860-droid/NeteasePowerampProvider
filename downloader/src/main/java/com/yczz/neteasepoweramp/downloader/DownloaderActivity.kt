@@ -528,7 +528,7 @@ class DownloaderActivity : Activity() {
         }
         // Proxy-fd fallback (one Range request per 64 KB - slow, but always works).
         val ext = sniffViaProxy(docUri)
-        val cache = newCacheFile()
+        val cache = newCacheFile(ext)
         try {
             openStream(docUri).use { input ->
                 FileOutputStream(cache).use { out -> copyStream(input, out, -1) }
@@ -613,7 +613,7 @@ class DownloaderActivity : Activity() {
         }
     }
 
-    private fun newCacheFile(): File = File(cacheDir, "ndl_${System.currentTimeMillis()}")
+    private fun newCacheFile(ext: String): File = File(cacheDir, "ndl_${System.currentTimeMillis()}$ext")
 
     /**
      * Single- or multi-connection download of the raw bytes into a cache file. NetEase's CDN
@@ -652,7 +652,8 @@ class DownloaderActivity : Activity() {
         }
 
         val filename = sanitize("${song.artist.ifEmpty { "Unknown" }} - ${song.title.ifEmpty { song.name }}") + ext
-        val cache = newCacheFile()
+        // The extension matters: jaudiotagger picks the tag reader by file extension.
+        val cache = newCacheFile(ext)
         try {
             if (size in 1 until MIN_SEG_FILE) {
                 singleInto(cache, url, headers)
