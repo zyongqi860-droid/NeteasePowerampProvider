@@ -169,7 +169,11 @@ class NeteaseApi(context: Context) {
         return try {
             val root = JSONObject(body)
             val song = root.optJSONArray("songs")?.optJSONObject(0) ?: return null
-            song.optJSONObject("al")?.optString("picUrl").orEmpty().trim().ifEmpty { null }
+            // song/detail answers with the legacy "album" object; newer payloads use "al".
+            val albumObj = song.optJSONObject("al") ?: song.optJSONObject("album") ?: return null
+            var url = albumObj.optString("picUrl").orEmpty().trim()
+            if (url.startsWith("http://")) url = "https://" + url.removePrefix("http://")
+            url.ifEmpty { null }
         } catch (_: Exception) {
             null
         }

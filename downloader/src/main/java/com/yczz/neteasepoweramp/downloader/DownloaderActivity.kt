@@ -546,8 +546,10 @@ class DownloaderActivity : Activity() {
      * Embeds title/artist/album/lyrics/cover into the downloaded file, then publishes it into
      * Music/NeteaseDownload. Best-effort: a failed tag never fails the download.
      */
-    private fun tagAndPublish(song: DocRow, cdn: CdnResult) {
+    /** @return a short warning when the cover could not be embedded, null on success. */
+    private fun tagAndPublish(song: DocRow, cdn: CdnResult): String? {
         mainHandler.post { statusView.text = getString(R.string.status_tagging) }
+        var coverNote: String? = null
         try {
             val songId = song.songId
             if (songId != null) {
@@ -564,25 +566,45 @@ class DownloaderActivity : Activity() {
                     Log.w(TAG, "lyrics tag failed", t)
                 }
                 try {
-                    val coverUrl = song.coverUrl.ifEmpty { api.coverUrlFor(songId) }
+                    val coverUrl = (song.coverUrl.ifEmpty { api.coverUrlFor(songId) })
+                        ?.takeIf { it.startsWith("http") }
                     val bytes = coverUrl?.let { fetchBytes(it) }
-                    if (bytes != null && bytes.size > 1024) {
-                        val art = org.jaudiotagger.tag.images.AndroidArtwork()
-                        art.binaryData = bytes
-                        art.mimeType =
+                    if (bytes == null || bytes.size <= 1024) {
+                        coverNote = "封面下载失败"
+                    } else {
+                        val mime =
                             if (bytes.size > 3 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'N'.code.toByte() && bytes[2] == 'G'.code.toByte()) {
                                 "image/png"
                             } else {
                                 "image/jpeg"
                             }
-                        art.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
-                        try {
-                            tag.deleteArtworkField()
-                        } catch (_: Exception) {
+                        val flacTag = tag as? org.jaudiotagger.tag.flac.FlacTag
+                        if (flacTag != null) {
+                            // FlacTag.setField(Artwork) routes through setImageFromData(), which
+                            // throws on Android - build the PICTURE block directly instead.
+                            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            val width = bmp?.width ?: 0
+                            val height = bmp?.height ?: 0
+                            bmp?.recycle()
+                            try {
+                                flacTag.deleteArtworkField()
+                            } catch (_: Exception) {
+                            }
+                            flacTag.setField(flacTag.createArtworkField(bytes, 3, mime, "", width, height, 0, 0))
+                        } else {
+                            val art = org.jaudiotagger.tag.images.AndroidArtwork()
+                            art.binaryData = bytes
+                            art.mimeType = mime
+                            art.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                            try {
+                                tag.deleteArtworkField()
+                            } catch (_: Exception) {
+                            }
+                            tag.setField(art)
                         }
-                        tag.setField(art)
                     }
                 } catch (t: Throwable) {
+                    coverNote = t.message ?: t.javaClass.simpleName
                     Log.w(TAG, "cover tag failed", t)
                 }
                 audioFile.commit()
@@ -597,6 +619,12 @@ class DownloaderActivity : Activity() {
                 saveToPublicDirDirect(cdn.filename, input)
             }
         }
+        if (coverNote != null) {
+            mainHandler.post {
+                statusView.text = getString(R.string.status_saved_note, song.title, coverNote)
+            }
+        }
+        return coverNote
     }
 
     private fun fetchBytes(url: String): ByteArray? {

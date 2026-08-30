@@ -11,8 +11,8 @@ android {
         applicationId = "com.yczz.neteasepoweramp.downloader"
         minSdk = 21
         targetSdk = 35
-        versionCode = 7
-        versionName = "2.2.1-tagfix"
+        versionCode = 8
+        versionName = "2.2.2-flac-cover"
     }
 
     compileOptions {
