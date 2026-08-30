@@ -11,8 +11,8 @@ android {
         applicationId = "com.yczz.neteasepoweramp.downloader"
         minSdk = 21
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2.0-segments"
+        versionCode = 4
+        versionName = "2.0.0-standalone"
     }
 
     compileOptions {
@@ -28,4 +28,5 @@ android {
 dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.okhttp)
 }
